@@ -1,3 +1,24 @@
+## 0.0.1-dev.7
+
+- Add `PGP.encryptToRecipients` for multi-recipient encryption.
+- Add certificate inspection: `fingerprint`, `userIds`, `expiryEpoch`, and
+  `info` (returns a `CertificateInfo`).
+- Add passphrase-protected private keys: `PGP.generateLockedKey` and
+  `Certificate.unlock`.
+- Add detached signatures: `Certificate.signDetached` and
+  `Certificate.verifyDetached`.
+- Add key expiration: `PGP.generateKeyWithExpiry` and
+  `Certificate.setExpiry`.
+- Add signed and encrypted messages: `PGP.encryptAndSign` and
+  `Certificate.decryptAndVerify` (returns a `SignedPlaintext`).
+- Add a binary data (bytes) API: `Certificate.encryptBytes`/`decryptBytes`,
+  `Certificate.signBytes`/`verifyBytes`, and
+  `PGP.encryptBytesToRecipients`.
+- Add cleartext signatures: `Certificate.signCleartext` and
+  `Certificate.verifyCleartext`.
+- Add symmetric (passphrase-only) encryption: `PGP.encryptSymmetric` and
+  `PGP.decryptSymmetric`.
+
 ## 0.0.1-dev.6
 
 - Add common message workflows: encrypt/decrypt ASCII-armored text messages
