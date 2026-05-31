@@ -1,0 +1,14 @@
+[package]
+name = "pgp-ffi"
+version = "0.0.1"
+edition = "2021"
+description = "OpenPGP and Sequoia FFI bindings"
+repository = "https://github.com/ManyMath/pgp-ffi"
+license = "MIT"
+
+[[bin]]
+name = "pgp_ffi"
+path = "src/main.rs"
+
+[dependencies]
+sequoia-openpgp = "1.21.2"
