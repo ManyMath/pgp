@@ -38,11 +38,15 @@ void main() {
 The package intentionally exposes common certificate and message workflows, not
 the full OpenPGP packet/keyserver surface:
 
-- generate certificates with encryption and signing subkeys
+- generate certificates with encryption and signing subkeys, optionally with
+  an expiration or a passphrase-locked secret key
 - import and export ASCII-armored public and secret certificates
-- encrypt/decrypt ASCII-armored text messages
-- sign/verify ASCII-armored text messages
+- encrypt/decrypt and sign/verify ASCII-armored text messages, or raw bytes
+- multi-recipient and signed+encrypted messages
+- detached and cleartext signatures
+- symmetric (passphrase-only) encryption and decryption
 - add/revoke user IDs, add/revoke subkeys, and revoke certificates
+- inspect certificates: fingerprint, user IDs, and expiration
 
 See `example/pgp_example.dart` for the supported operations in one program.
 Build the native library first, then run it from the package root:
