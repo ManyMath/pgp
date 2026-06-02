@@ -6,6 +6,11 @@ description = "OpenPGP and Sequoia FFI bindings"
 repository = "https://github.com/ManyMath/pgp-ffi"
 license = "MIT"
 
+[lib]
+name = "pgp_ffi"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib"]
+
 [[bin]]
 name = "pgp_ffi"
 path = "src/main.rs"

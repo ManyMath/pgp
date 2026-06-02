@@ -20,3 +20,10 @@ If you are using Fedora (or a derivative), try:
 $ sudo dnf install clang pkg-config nettle-devel
 ```
 
+## Development
+- Install `cbindgen`: `cargo install --force cbindgen`.
+- To generate `pgp-ffi.h` C bindings for Rust, use `cbindgen` in the
+  `pgp-ffi` directory:
+  ```
+  cbindgen --config cbindgen.toml --crate pgp-ffi --output pgp-ffi.h
+  ```
