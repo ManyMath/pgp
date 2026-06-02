@@ -2,28 +2,14 @@
 A crate to provide FFI bindings for OpenPGP and Sequoia.
 
 ## Dependencies
-The system library `nettle` required by crate `nettle-sys`.  See 
-https://gitlab.com/sequoia-pgp/nettle-sys#building for more information.
+This crate uses `sequoia-openpgp` with the `crypto-rust` backend, so it does **not** require `nettle` / `nettle-dev` system packages to build.
 
-If you are using Debian (or a derivative), try:
-```
-$ sudo apt install clang llvm pkg-config nettle-dev
-```
-
-If you are using Arch (or a derivative), try:
-```
-$ sudo pacman -S clang pkg-config nettle --needed
-```
-
-If you are using Fedora (or a derivative), try:
-```
-$ sudo dnf install clang pkg-config nettle-devel
-```
+For the optional in-repo C smoke test (`test.c`), you’ll need a C compiler (e.g., `gcc` or `clang`).
 
 ## Development
 - Install `cbindgen`: `cargo install --force cbindgen`.
-- To generate `pgp-ffi.h` C bindings for Rust, use `cbindgen` in the
-  `pgp-ffi` directory:
-  ```
-  cbindgen --config cbindgen.toml --crate pgp-ffi --output pgp-ffi.h
-  ```
+- `cargo build` regenerates `pgp-ffi.h` automatically via `build.rs`.
+- To run the C smoke test:
+  - `cargo build`
+  - `gcc test.c -I. -L./target/debug -lpgp_ffi -o test_runner`
+  - `LD_LIBRARY_PATH=./target/debug ./test_runner`

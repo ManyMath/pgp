@@ -48,4 +48,60 @@ int32_t pgp_certificate_from_armored(const char *armored, struct Certificate **c
  */
 int32_t pgp_key_generate(const char *user_id, struct Certificate **new_cert);
 
+/**
+ * Export the certificate as an ASCII-armored secret key block.
+ * Caller must free `*armored` with `free()`.
+ *
+ * # Safety
+ * `cert` and `armored` must be non-null.
+ */
+int32_t pgp_certificate_export_armored(const struct Certificate *cert, char **armored);
+
+/**
+ * Revoke the cert and write the updated cert to `*revoked_cert`.
+ *
+ * # Safety
+ * `cert` and `revoked_cert` must be non-null.
+ */
+int32_t pgp_certificate_revoke(const struct Certificate *cert, struct Certificate **revoked_cert);
+
+/**
+ * Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
+ *
+ * # Safety
+ * `cert` and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_add_transport_encryption_subkey(const struct Certificate *cert,
+                                                        struct Certificate **new_cert);
+
+/**
+ * Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
+ *
+ * # Safety
+ * `cert` and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_revoke_subkey(const struct Certificate *cert,
+                                      uint32_t subkey_index,
+                                      struct Certificate **new_cert);
+
+/**
+ * Add `user_id` to the cert, writing the updated cert to `*new_cert`.
+ *
+ * # Safety
+ * `cert`, `user_id`, and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_add_userid(const struct Certificate *cert,
+                                   const char *user_id,
+                                   struct Certificate **new_cert);
+
+/**
+ * Revoke the exact-match user ID, writing the updated cert to `*new_cert`.
+ *
+ * # Safety
+ * `cert`, `user_id`, and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_revoke_userid(const struct Certificate *cert,
+                                      const char *user_id,
+                                      struct Certificate **new_cert);
+
 #endif /* pgp_ffi_h */
