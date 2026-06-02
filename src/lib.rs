@@ -1,232 +1,126 @@
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char};
-use std::io::{self, Write, Cursor};
+use sequoia_openpgp::{
+    cert::{Cert as SequoiaCert, CertBuilder},
+    parse::Parse,
+    packet::{
+        Key as SequoiaKey,
+        key::{UnspecifiedParts, UnspecifiedRole},
+        UserID as SequoiaUserID,
+    },
+    Result,
+};
+use std::ffi::CStr;
+use std::io::Cursor;
 
-use sequoia_openpgp as openpgp;
+#[repr(i32)]
+pub enum FFIError {
+    Ok = 0,
+    Null = -1,
+    Invalid = -2,
+    Failed = -3,
+}
 
-use crate::openpgp::cert::prelude::*;
-use crate::openpgp::crypto::SessionKey;
-use crate::openpgp::types::SymmetricAlgorithm;
-use crate::openpgp::serialize::stream::{Armorer, Message, Encryptor2, LiteralWriter};
-use crate::openpgp::parse::{Parse, stream::*};
-use crate::openpgp::policy::Policy;
-use crate::openpgp::policy::StandardPolicy as P;
-use sequoia_openpgp::serialize::Serialize;
+pub struct Certificate(*mut SequoiaCert);
+pub struct Key(*mut SequoiaKey<UnspecifiedParts, UnspecifiedRole>);
+pub struct UserID(*mut SequoiaUserID);
 
-/// Generates an encryption-capable key.
+/// # Safety
+/// `cert` must be non-null and from a `pgp_certificate_*` constructor.
 #[no_mangle]
-pub extern "C" fn generate_key() -> *const c_char {
-    match generate() {
-        Ok(cert) => {
-            let key_string = cert.to_string();  // Converts Cert to string for now
-            let c_string = CString::new(key_string).unwrap();
-            let ptr = c_string.into_raw();
-            ptr // No need to call std::mem::forget
+pub unsafe extern "C" fn pgp_certificate_free(cert: *mut Certificate) {
+    if !cert.is_null() {
+        let wrapper = Box::from_raw(cert);
+        if !wrapper.0.is_null() {
+            drop(Box::from_raw(wrapper.0));
         }
-        Err(_) => CString::new("").unwrap().into_raw(),
     }
 }
 
-/// Exports the generated key in ASCII-armored format.
+/// # Safety
+/// `key` must be non-null and from a `pgp_key_*` constructor.
 #[no_mangle]
-pub extern "C" fn export_ascii_key(cert_str: *const c_char) -> *const c_char {
-    let cert_string = convert_c_char_ptr_to_string(cert_str);
-
-    let cert = match Cert::from_reader(&mut Cursor::new(cert_string.as_bytes())) {
-        Ok(cert) => cert,
-        Err(_) => return CString::new("").unwrap().into_raw(),
-    };
-
-    match export_ascii_armored_key(&cert) {
-        Ok(armored_key) => {
-            let c_string = CString::new(armored_key).unwrap();
-            let ptr = c_string.into_raw();
-            ptr // No need to call std::mem::forget
+pub unsafe extern "C" fn pgp_key_free(key: *mut Key) {
+    if !key.is_null() {
+        let wrapper = Box::from_raw(key);
+        if !wrapper.0.is_null() {
+            drop(Box::from_raw(wrapper.0));
         }
-        Err(_) => CString::new("").unwrap().into_raw(),
     }
 }
 
-/// Encrypts a message and returns the ciphertext.
+/// # Safety
+/// `user_id` must be non-null and from a `pgp_user_id_*` constructor.
 #[no_mangle]
-pub extern "C" fn encrypt_message(cert_str: *const c_char, message: *const c_char) -> *const c_char {
-    let cert_string = convert_c_char_ptr_to_string(cert_str);
-    let plaintext = convert_c_char_ptr_to_string(message);
-
-    let cert = match Cert::from_reader(&mut Cursor::new(cert_string.as_bytes())) {
-        Ok(cert) => cert,
-        Err(_) => return CString::new("").unwrap().into_raw(),
-    };
-
-    let mut ciphertext = Vec::new();
-    let policy = &P::new();
-    match encrypt(policy, &mut ciphertext, &plaintext, &cert) {
-        Ok(_) => {
-            let c_string = CString::new(ciphertext).unwrap();
-            let ptr = c_string.into_raw();
-            ptr // No need to call std::mem::forget
+pub unsafe extern "C" fn pgp_user_id_free(user_id: *mut UserID) {
+    if !user_id.is_null() {
+        let wrapper = Box::from_raw(user_id);
+        if !wrapper.0.is_null() {
+            drop(Box::from_raw(wrapper.0));
         }
-        Err(_) => CString::new("").unwrap().into_raw(),
     }
 }
 
-/// Decrypts a message and returns the plaintext.
+/// Parse an ASCII-armored PGP cert into `*cert`.
+///
+/// # Safety
+/// `armored` and `cert` must be non-null.
 #[no_mangle]
-pub extern "C" fn decrypt_message(cert_str: *const c_char, ciphertext: *const c_char) -> *const c_char {
-    let cert_string = convert_c_char_ptr_to_string(cert_str);
-    let ciphertext = convert_c_char_ptr_to_string(ciphertext).into_bytes();
+pub unsafe extern "C" fn pgp_certificate_from_armored(
+    armored: *const libc::c_char,
+    cert: *mut *mut Certificate,
+) -> i32 {
+    if armored.is_null() || cert.is_null() {
+        return FFIError::Null as i32;
+    }
 
-    let cert = match Cert::from_reader(&mut Cursor::new(cert_string.as_bytes())) {
-        Ok(cert) => cert,
-        Err(_) => return CString::new("").unwrap().into_raw(),
+    let c_str = CStr::from_ptr(armored);
+    let armored_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
     };
 
-    let mut plaintext = Vec::new();
-    let policy = &P::new();
-    match decrypt(policy, &mut plaintext, &ciphertext, &cert) {
-        Ok(_) => {
-            let c_string = CString::new(plaintext).unwrap();
-            let ptr = c_string.into_raw();
-            ptr // No need to call std::mem::forget
+    let cursor = Cursor::new(armored_str);
+    let result: Result<SequoiaCert> = SequoiaCert::from_reader(cursor);
+
+    match result {
+        Ok(sequoia_cert) => {
+            let inner = Box::into_raw(Box::new(sequoia_cert));
+            *cert = Box::into_raw(Box::new(Certificate(inner)));
+            FFIError::Ok as i32
         }
-        Err(_) => CString::new("").unwrap().into_raw(),
+        Err(_) => FFIError::Invalid as i32,
     }
 }
 
-/// Helper function: Converts a C string pointer to a Rust string.
-fn convert_c_char_ptr_to_string(c_char_ptr: *const c_char) -> String {
-    let c_str = unsafe {
-        assert!(!c_char_ptr.is_null());
-        CStr::from_ptr(c_char_ptr)
-    };
-    c_str.to_string_lossy().into_owned()
-}
+/// Generate a new certificate with the given user ID.
+///
+/// # Safety
+/// `user_id` and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_key_generate(
+    user_id: *const libc::c_char,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if user_id.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
 
-/// Generates an encryption-capable key.
-fn generate() -> openpgp::Result<openpgp::Cert> {
-    let (cert, _revocation) = CertBuilder::new()
-        .add_userid("someone@example.org")
+    let c_str = CStr::from_ptr(user_id);
+    let user_id_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let result = CertBuilder::new()
+        .add_userid(user_id_str)
         .add_transport_encryption_subkey()
-        .generate()?;
+        .generate();
 
-    Ok(cert)
-}
-
-/// Exports the generated key as ASCII-armored.
-fn export_ascii_armored_key(cert: &openpgp::Cert) -> openpgp::Result<String> {
-    let mut armored = Vec::new();
-
-    // Create a message object for the armorer.
-    let message = Message::new(&mut armored);
-
-    // Create the armorer and serialize the key.
-    let mut armorer = Armorer::new(message).build()?;
-
-    cert.as_tsk().serialize(&mut armorer)?;
-    armorer.finalize()?;
-
-    Ok(String::from_utf8(armored).expect("Failed to convert armored key to UTF-8"))
-}
-
-/// Encrypts the given message.
-fn encrypt(
-    p: &dyn Policy,
-    sink: &mut (dyn Write + Send + Sync),
-    plaintext: &str,
-    recipient: &openpgp::Cert,
-) -> openpgp::Result<()> {
-    let recipients = recipient
-        .keys()
-        .with_policy(p, None)
-        .supported()
-        .alive()
-        .revoked(false)
-        .for_transport_encryption();
-
-    // Start streaming an OpenPGP message.
-    let message = Message::new(sink);
-
-    // We want to encrypt a literal data packet.
-    let message = Encryptor2::for_recipients(message, recipients).build()?;
-
-    // Emit a literal data packet.
-    let mut message = LiteralWriter::new(message).build()?;
-
-    // Encrypt the data.
-    message.write_all(plaintext.as_bytes())?;
-
-    // Finalize the OpenPGP message to make sure that all data is written.
-    message.finalize()?;
-
-    Ok(())
-}
-
-/// Decrypts the given message.
-fn decrypt(
-    p: &dyn Policy,
-    sink: &mut dyn Write,
-    ciphertext: &[u8],
-    recipient: &openpgp::Cert,
-) -> openpgp::Result<()> {
-    let helper = Helper {
-        secret: recipient,
-        policy: p,
-    };
-
-    let mut decryptor = DecryptorBuilder::from_bytes(ciphertext)?
-        .with_policy(p, None, helper)?;
-
-    io::copy(&mut decryptor, sink)?;
-
-    Ok(())
-}
-
-struct Helper<'a> {
-    secret: &'a openpgp::Cert,
-    policy: &'a dyn Policy,
-}
-
-impl<'a> VerificationHelper for Helper<'a> {
-    fn get_certs(
-        &mut self,
-        _ids: &[openpgp::KeyHandle],
-    ) -> openpgp::Result<Vec<openpgp::Cert>> {
-        Ok(Vec::new())
-    }
-
-    fn check(&mut self, _structure: MessageStructure) -> openpgp::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> DecryptionHelper for Helper<'a> {
-    fn decrypt<D>(
-        &mut self,
-        pkesks: &[openpgp::packet::PKESK],
-        _skesks: &[openpgp::packet::SKESK],
-        sym_algo: Option<SymmetricAlgorithm>,
-        mut decrypt: D,
-    ) -> openpgp::Result<Option<openpgp::Fingerprint>>
-    where
-        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
-    {
-        let key = self
-            .secret
-            .keys()
-            .unencrypted_secret()
-            .with_policy(self.policy, None)
-            .for_transport_encryption()
-            .next()
-            .unwrap()
-            .key()
-            .clone();
-
-        let mut pair = key.into_keypair()?;
-
-        pkesks[0]
-            .decrypt(&mut pair, sym_algo)
-            .map(|(algo, session_key)| decrypt(algo, &session_key));
-
-        Ok(None)
+    match result {
+        Ok((cert, _revocation)) => {
+            let inner = Box::into_raw(Box::new(cert));
+            *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+            FFIError::Ok as i32
+        }
+        Err(_) => FFIError::Failed as i32,
     }
 }
