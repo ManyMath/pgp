@@ -221,4 +221,29 @@ int32_t pgp_certificate_userids(const struct Certificate *cert, char **out);
  */
 int32_t pgp_certificate_expiry_epoch(const struct Certificate *cert, int64_t *out);
 
+/**
+ * Generate a new certificate with all secret key material encrypted with
+ * `passphrase`. Writes the locked certificate to `*new_cert`.
+ *
+ * # Safety
+ * `user_id`, `passphrase`, and `new_cert` must be non-null.
+ */
+int32_t pgp_key_generate_with_passphrase(const char *user_id,
+                                         const char *passphrase,
+                                         struct Certificate **new_cert);
+
+/**
+ * Decrypt all passphrase-protected secret key material in `cert`, writing
+ * a new certificate with unencrypted secrets to `*out_cert`.
+ *
+ * Returns `Invalid` (-2) if the passphrase is wrong for any key,
+ * `NotFound` (-4) if `cert` carries no secret material.
+ *
+ * # Safety
+ * `cert`, `passphrase`, and `out_cert` must be non-null.
+ */
+int32_t pgp_certificate_unlock(const struct Certificate *cert,
+                               const char *passphrase,
+                               struct Certificate **out_cert);
+
 #endif  /* pgp_ffi_h */

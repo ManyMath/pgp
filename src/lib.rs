@@ -2,7 +2,7 @@ use sequoia_openpgp::{
     armor,
     cert::{Cert as SequoiaCert, CertBuilder},
     cert::prelude::*,
-    crypto::SessionKey,
+    crypto::{Password, SessionKey},
     parse::{
         stream::{
             DecryptionHelper, DecryptorBuilder, MessageLayer, MessageStructure,
@@ -1060,5 +1060,112 @@ pub unsafe extern "C" fn pgp_certificate_expiry_epoch(
         Err(_) => 0,
     };
     *out = epoch_secs;
+    FFIError::Ok as i32
+}
+
+/// Generate a new certificate with all secret key material encrypted with
+/// `passphrase`. Writes the locked certificate to `*new_cert`.
+///
+/// # Safety
+/// `user_id`, `passphrase`, and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_key_generate_with_passphrase(
+    user_id: *const libc::c_char,
+    passphrase: *const libc::c_char,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if user_id.is_null() || passphrase.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let user_id_str = match CStr::from_ptr(user_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let password: Password = passphrase_str.into();
+    let result = CertBuilder::new()
+        .add_userid(user_id_str)
+        .add_transport_encryption_subkey()
+        .add_signing_subkey()
+        .set_password(Some(password))
+        .generate();
+
+    match result {
+        Ok((cert, _revocation)) => {
+            let inner = Box::into_raw(Box::new(cert));
+            *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+            FFIError::Ok as i32
+        }
+        Err(_) => FFIError::Failed as i32,
+    }
+}
+
+/// Decrypt all passphrase-protected secret key material in `cert`, writing
+/// a new certificate with unencrypted secrets to `*out_cert`.
+///
+/// Returns `Invalid` (-2) if the passphrase is wrong for any key,
+/// `NotFound` (-4) if `cert` carries no secret material.
+///
+/// # Safety
+/// `cert`, `passphrase`, and `out_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_unlock(
+    cert: *const Certificate,
+    passphrase: *const libc::c_char,
+    out_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || passphrase.is_null() || out_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+
+    // Require at least one key with secret material.
+    if sequoia_cert.keys().secret().next().is_none() {
+        return FFIError::NotFound as i32;
+    }
+
+    let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let password: Password = passphrase_str.into();
+
+    // Decrypt each key that has encrypted secret material and re-insert it.
+    let mut packets: Vec<sequoia_openpgp::Packet> = Vec::new();
+    for ka in sequoia_cert.keys().secret() {
+        let key = ka.key().clone();
+        if key.has_unencrypted_secret() {
+            continue;
+        }
+        let decrypted = match key.decrypt_secret(&password) {
+            Ok(k) => k,
+            Err(_) => return FFIError::Invalid as i32,
+        };
+        let packet: sequoia_openpgp::Packet = if ka.primary() {
+            decrypted.role_into_primary().into()
+        } else {
+            decrypted.role_into_subordinate().into()
+        };
+        packets.push(packet);
+    }
+
+    let updated = match sequoia_cert.insert_packets(packets) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *out_cert = Box::into_raw(Box::new(Certificate(inner)));
     FFIError::Ok as i32
 }
