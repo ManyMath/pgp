@@ -1454,3 +1454,280 @@ pub unsafe extern "C" fn pgp_certificate_set_expiry(
     *new_cert = Box::into_raw(Box::new(Certificate(inner)));
     FFIError::Ok as i32
 }
+
+struct DecryptAndVerifyHelper<'a> {
+    decrypt_cert: &'a SequoiaCert,
+    verify_cert: &'a SequoiaCert,
+    policy: &'a dyn Policy,
+    signer_fp: Option<String>,
+}
+
+impl VerificationHelper for DecryptAndVerifyHelper<'_> {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> Result<Vec<SequoiaCert>> {
+        Ok(vec![self.verify_cert.clone()])
+    }
+
+    fn check(&mut self, structure: MessageStructure) -> Result<()> {
+        let mut found = false;
+        for layer in structure {
+            if let MessageLayer::SignatureGroup { results } = layer {
+                for result in results {
+                    if let Ok(good) = result {
+                        self.signer_fp = Some(good.ka.fingerprint().to_hex());
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if found {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No valid signature"))
+        }
+    }
+}
+
+impl DecryptionHelper for DecryptAndVerifyHelper<'_> {
+    fn decrypt<D>(
+        &mut self,
+        pkesks: &[PKESK],
+        _skesks: &[SKESK],
+        sym_algo: Option<SymmetricAlgorithm>,
+        mut decrypt: D,
+    ) -> Result<Option<Fingerprint>>
+    where
+        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
+    {
+        let keys = self
+            .decrypt_cert
+            .keys()
+            .unencrypted_secret()
+            .with_policy(self.policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+            .map(|key| key.key().clone())
+            .collect::<Vec<_>>();
+
+        for pkesk in pkesks {
+            for key in &keys {
+                let mut keypair = key.clone().into_keypair()?;
+                if pkesk
+                    .decrypt(&mut keypair, sym_algo)
+                    .map(|(algo, session_key)| decrypt(algo, &session_key))
+                    .unwrap_or(false)
+                {
+                    return Ok(Some(key.fingerprint()));
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("No matching decryption key"))
+    }
+}
+
+// -- Feature 1: Signed+encrypted messages
+
+/// Encrypt `plaintext` to all `count` recipient certificates and sign the
+/// message with `signer_cert`. Writes a single ASCII-armored message to
+/// `*armored_message`. Caller must free `*armored_message` with `free()`.
+///
+/// # Safety
+/// All pointers must be non-null; each element of `recipient_certs` must be a
+/// valid Certificate pointer.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_encrypt_and_sign_string(
+    signer_cert: *const Certificate,
+    recipient_certs: *const *const Certificate,
+    count: usize,
+    plaintext: *const libc::c_char,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if signer_cert.is_null()
+        || recipient_certs.is_null()
+        || plaintext.is_null()
+        || armored_message.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    if count == 0 {
+        return FFIError::NotFound as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let signer_wrapper = &*signer_cert;
+    if signer_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let signer_cert_ref = &*signer_wrapper.0;
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+
+    let policy = &StandardPolicy::new();
+
+    let signing_key = match signer_cert_ref
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+    let keypair = match signing_key.into_keypair() {
+        Ok(kp) => kp,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut cert_vec: Vec<SequoiaCert> = Vec::with_capacity(count);
+    for i in 0..count {
+        let outer_ptr = *recipient_certs.add(i);
+        if outer_ptr.is_null() {
+            return FFIError::Null as i32;
+        }
+        let wrapper = &*outer_ptr;
+        if wrapper.0.is_null() {
+            return FFIError::Invalid as i32;
+        }
+        cert_vec.push((&*wrapper.0).clone());
+    }
+
+    let mut recipients: Vec<_> = Vec::new();
+    for cert in cert_vec.iter() {
+        for ka in cert
+            .keys()
+            .with_policy(policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+        {
+            recipients.push(ka);
+        }
+    }
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Encryptor2::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Signer::new(message, keypair).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
+/// Decrypt an ASCII-armored message with `decrypt_cert` and verify its
+/// signature against `verify_cert`. Writes the plaintext to `*plaintext_out`
+/// and the signer's fingerprint to `*fingerprint_out`. Both must be freed with
+/// `free()`. Returns `Failed` (-3) if the message carries no valid signature.
+///
+/// # Safety
+/// All pointers must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_and_verify_string(
+    decrypt_cert: *const Certificate,
+    verify_cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    plaintext_out: *mut *mut libc::c_char,
+    fingerprint_out: *mut *mut libc::c_char,
+) -> i32 {
+    if decrypt_cert.is_null()
+        || verify_cert.is_null()
+        || armored_message.is_null()
+        || plaintext_out.is_null()
+        || fingerprint_out.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *plaintext_out = ptr::null_mut();
+    *fingerprint_out = ptr::null_mut();
+
+    let decrypt_wrapper = &*decrypt_cert;
+    if decrypt_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let verify_wrapper = &*verify_cert;
+    if verify_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let decrypt_cert_ref = &*decrypt_wrapper.0;
+    let verify_cert_ref = &*verify_wrapper.0;
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = DecryptAndVerifyHelper {
+        decrypt_cert: decrypt_cert_ref,
+        verify_cert: verify_cert_ref,
+        policy,
+        signer_fp: None,
+    };
+
+    let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(d) => d,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if decryptor.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let text = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let helper = decryptor.into_helper();
+    let fp = match helper.signer_fp {
+        Some(fp) => fp,
+        None => return FFIError::Failed as i32,
+    };
+
+    let r = write_c_string(&text, plaintext_out);
+    if r != 0 {
+        return r;
+    }
+    let r = write_c_string(&fp, fingerprint_out);
+    if r != 0 {
+        // The plaintext buffer was already handed out; free it so the caller,
+        // which treats a non-zero return as "nothing was allocated", cannot
+        // leak it.
+        libc::free(*plaintext_out as *mut libc::c_void);
+        *plaintext_out = ptr::null_mut();
+    }
+    r
+}

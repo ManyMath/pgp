@@ -294,4 +294,34 @@ int32_t pgp_certificate_set_expiry(const struct Certificate *cert,
                                    uint64_t validity_seconds,
                                    struct Certificate **new_cert);
 
+/**
+ * Encrypt `plaintext` to all `count` recipient certificates and sign the
+ * message with `signer_cert`. Writes a single ASCII-armored message to
+ * `*armored_message`. Caller must free `*armored_message` with `free()`.
+ *
+ * # Safety
+ * All pointers must be non-null; each element of `recipient_certs` must be a
+ * valid Certificate pointer.
+ */
+int32_t pgp_encrypt_and_sign_string(const struct Certificate *signer_cert,
+                                    const struct Certificate *const *recipient_certs,
+                                    uintptr_t count,
+                                    const char *plaintext,
+                                    char **armored_message);
+
+/**
+ * Decrypt an ASCII-armored message with `decrypt_cert` and verify its
+ * signature against `verify_cert`. Writes the plaintext to `*plaintext_out`
+ * and the signer's fingerprint to `*fingerprint_out`. Both must be freed with
+ * `free()`. Returns `Failed` (-3) if the message carries no valid signature.
+ *
+ * # Safety
+ * All pointers must be non-null.
+ */
+int32_t pgp_decrypt_and_verify_string(const struct Certificate *decrypt_cert,
+                                      const struct Certificate *verify_cert,
+                                      const char *armored_message,
+                                      char **plaintext_out,
+                                      char **fingerprint_out);
+
 #endif  /* pgp_ffi_h */
