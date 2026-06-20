@@ -5,8 +5,8 @@ use sequoia_openpgp::{
     crypto::{Password, SessionKey},
     parse::{
         stream::{
-            DecryptionHelper, DecryptorBuilder, MessageLayer, MessageStructure,
-            VerificationHelper, VerifierBuilder,
+            DecryptionHelper, DecryptorBuilder, DetachedVerifierBuilder,
+            MessageLayer, MessageStructure, VerificationHelper, VerifierBuilder,
         },
         Parse,
     },
@@ -1168,4 +1168,111 @@ pub unsafe extern "C" fn pgp_certificate_unlock(
     let inner = Box::into_raw(Box::new(updated));
     *out_cert = Box::into_raw(Box::new(Certificate(inner)));
     FFIError::Ok as i32
+}
+
+/// Sign `plaintext` with the certificate and write an ASCII-armored detached
+/// signature (BEGIN PGP SIGNATURE) to `*armored_sig`. The plaintext is left
+/// untouched. Caller must free `*armored_sig` with `free()`.
+///
+/// # Safety
+/// `cert`, `plaintext`, and `armored_sig` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_sign_detached(
+    cert: *const Certificate,
+    plaintext: *const libc::c_char,
+    armored_sig: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || plaintext.is_null() || armored_sig.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored_sig = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let key = match cert
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+    let keypair = match key.into_keypair() {
+        Ok(kp) => kp,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Signature).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match Signer::new(message, keypair).detached().build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let sig = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&sig, armored_sig)
+}
+
+/// Verify a detached signature `armored_sig` against `plaintext` using the
+/// certificate. Returns 0 if valid, negative on failure.
+///
+/// # Safety
+/// `cert`, `plaintext`, and `armored_sig` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_detached(
+    cert: *const Certificate,
+    plaintext: *const libc::c_char,
+    armored_sig: *const libc::c_char,
+) -> i32 {
+    if cert.is_null() || plaintext.is_null() || armored_sig.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+    let sig_bytes = CStr::from_ptr(armored_sig).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = VerifyHelper { cert };
+    let mut verifier = match DetachedVerifierBuilder::from_bytes(sig_bytes) {
+        Ok(b) => match b.with_policy(policy, None, helper) {
+            Ok(v) => v,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    match verifier.verify_bytes(plaintext_bytes) {
+        Ok(_) => FFIError::Ok as i32,
+        Err(_) => FFIError::Failed as i32,
+    }
 }

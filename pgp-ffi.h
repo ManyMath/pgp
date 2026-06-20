@@ -246,4 +246,27 @@ int32_t pgp_certificate_unlock(const struct Certificate *cert,
                                const char *passphrase,
                                struct Certificate **out_cert);
 
+/**
+ * Sign `plaintext` with the certificate and write an ASCII-armored detached
+ * signature (BEGIN PGP SIGNATURE) to `*armored_sig`. The plaintext is left
+ * untouched. Caller must free `*armored_sig` with `free()`.
+ *
+ * # Safety
+ * `cert`, `plaintext`, and `armored_sig` must be non-null.
+ */
+int32_t pgp_certificate_sign_detached(const struct Certificate *cert,
+                                      const char *plaintext,
+                                      char **armored_sig);
+
+/**
+ * Verify a detached signature `armored_sig` against `plaintext` using the
+ * certificate. Returns 0 if valid, negative on failure.
+ *
+ * # Safety
+ * `cert`, `plaintext`, and `armored_sig` must be non-null.
+ */
+int32_t pgp_certificate_verify_detached(const struct Certificate *cert,
+                                        const char *plaintext,
+                                        const char *armored_sig);
+
 #endif  /* pgp_ffi_h */
