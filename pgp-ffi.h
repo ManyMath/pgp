@@ -168,6 +168,22 @@ int32_t pgp_certificate_add_userid(const struct Certificate *cert,
                                    struct Certificate **new_cert);
 
 /**
+ * Encrypt `plaintext` to all `count` recipient certificates and write a single
+ * ASCII-armored message to `*armored_message`. Any recipient whose private key
+ * is available can decrypt. Returns NotFound if `count` is zero or no cert
+ * has a usable transport-encryption subkey.
+ * Caller must free `*armored_message` with `free()`.
+ *
+ * # Safety
+ * `certs`, `plaintext`, and `armored_message` must be non-null; each element
+ * of the `certs` array must be a valid Certificate pointer.
+ */
+int32_t pgp_encrypt_string_to_recipients(const struct Certificate *const *certs,
+                                         uintptr_t count,
+                                         const char *plaintext,
+                                         char **armored_message);
+
+/**
  * Revoke the exact-match user ID, writing the updated cert to `*new_cert`.
  *
  * # Safety

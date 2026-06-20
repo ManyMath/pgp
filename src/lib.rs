@@ -828,6 +828,96 @@ pub unsafe extern "C" fn pgp_certificate_add_userid(
     FFIError::Ok as i32
 }
 
+/// Encrypt `plaintext` to all `count` recipient certificates and write a single
+/// ASCII-armored message to `*armored_message`. Any recipient whose private key
+/// is available can decrypt. Returns NotFound if `count` is zero or no cert
+/// has a usable transport-encryption subkey.
+/// Caller must free `*armored_message` with `free()`.
+///
+/// # Safety
+/// `certs`, `plaintext`, and `armored_message` must be non-null; each element
+/// of the `certs` array must be a valid Certificate pointer.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_encrypt_string_to_recipients(
+    certs: *const *const Certificate,
+    count: usize,
+    plaintext: *const libc::c_char,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if certs.is_null() || plaintext.is_null() || armored_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    if count == 0 {
+        return FFIError::NotFound as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let policy = StandardPolicy::new();
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+
+    // Clone all certs so their key data lives at a single, function-scoped
+    // location. All subsequent borrows have a unified lifetime.
+    let mut cert_vec: Vec<SequoiaCert> = Vec::with_capacity(count);
+    for i in 0..count {
+        let outer_ptr = *certs.add(i);
+        if outer_ptr.is_null() {
+            return FFIError::Null as i32;
+        }
+        let wrapper = &*outer_ptr;
+        if wrapper.0.is_null() {
+            return FFIError::Invalid as i32;
+        }
+        cert_vec.push((&*wrapper.0).clone());
+    }
+
+    // Collect all transport-encryption keys from every cert.
+    let mut recipients: Vec<_> = Vec::new();
+    for cert in cert_vec.iter() {
+        for ka in cert
+            .keys()
+            .with_policy(&policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+        {
+            recipients.push(ka);
+        }
+    }
+
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Encryptor2::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
 /// Revoke the exact-match user ID, writing the updated cert to `*new_cert`.
 ///
 /// # Safety
