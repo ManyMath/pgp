@@ -98,6 +98,30 @@ int32_t pgp_certificate_decrypt_string(const struct Certificate *cert,
                                        char **plaintext);
 
 /**
+ * Sign `plaintext` with the certificate and write an ASCII-armored signed
+ * message to `*armored_message`. Caller must free `*armored_message` with
+ * `free()`.
+ *
+ * # Safety
+ * `cert`, `plaintext`, and `armored_message` must be non-null.
+ */
+int32_t pgp_certificate_sign_string(const struct Certificate *cert,
+                                    const char *plaintext,
+                                    char **armored_message);
+
+/**
+ * Verify an ASCII-armored signed message using the certificate and write the
+ * verified plaintext to `*plaintext`. Caller must free `*plaintext` with
+ * `free()`.
+ *
+ * # Safety
+ * `cert`, `armored_message`, and `plaintext` must be non-null.
+ */
+int32_t pgp_certificate_verify_string(const struct Certificate *cert,
+                                      const char *armored_message,
+                                      char **plaintext);
+
+/**
  * Revoke the cert and write the updated cert to `*revoked_cert`.
  *
  * # Safety

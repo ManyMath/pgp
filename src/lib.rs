@@ -4,7 +4,10 @@ use sequoia_openpgp::{
     cert::prelude::*,
     crypto::SessionKey,
     parse::{
-        stream::{DecryptionHelper, DecryptorBuilder, MessageStructure, VerificationHelper},
+        stream::{
+            DecryptionHelper, DecryptorBuilder, MessageLayer, MessageStructure,
+            VerificationHelper, VerifierBuilder,
+        },
         Parse,
     },
     packet::{
@@ -14,7 +17,7 @@ use sequoia_openpgp::{
         UserID as SequoiaUserID,
     },
     policy::{Policy, StandardPolicy},
-    serialize::stream::{Armorer, Encryptor2, LiteralWriter, Message},
+    serialize::stream::{Armorer, Encryptor2, LiteralWriter, Message, Signer},
     serialize::Serialize,
     types::{KeyFlags, ReasonForRevocation, SymmetricAlgorithm},
     Fingerprint, KeyHandle, Result,
@@ -53,6 +56,38 @@ unsafe fn write_c_string(value: &str, out: *mut *mut libc::c_char) -> i32 {
 struct DecryptOnlyHelper<'a> {
     secret: &'a SequoiaCert,
     policy: &'a dyn Policy,
+}
+
+struct VerifyHelper<'a> {
+    cert: &'a SequoiaCert,
+}
+
+impl VerificationHelper for VerifyHelper<'_> {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> Result<Vec<SequoiaCert>> {
+        Ok(vec![self.cert.clone()])
+    }
+
+    fn check(&mut self, structure: MessageStructure) -> Result<()> {
+        let mut good = false;
+        for (index, layer) in structure.into_iter().enumerate() {
+            match layer {
+                MessageLayer::SignatureGroup { results } if index == 0 => {
+                    if results.iter().any(|result| result.is_ok()) {
+                        good = true;
+                    } else {
+                        return Err(anyhow::anyhow!("No valid signature"));
+                    }
+                }
+                _ => return Err(anyhow::anyhow!("Unexpected message structure")),
+            }
+        }
+
+        if good {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No signature"))
+        }
+    }
 }
 
 impl VerificationHelper for DecryptOnlyHelper<'_> {
@@ -195,6 +230,7 @@ pub unsafe extern "C" fn pgp_key_generate(
     let result = CertBuilder::new()
         .add_userid(user_id_str)
         .add_transport_encryption_subkey()
+        .add_signing_subkey()
         .generate();
 
     match result {
@@ -431,6 +467,124 @@ pub unsafe extern "C" fn pgp_certificate_decrypt_string(
 
     let mut out = Vec::new();
     if decryptor.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let text = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    write_c_string(&text, plaintext)
+}
+
+/// Sign `plaintext` with the certificate and write an ASCII-armored signed
+/// message to `*armored_message`. Caller must free `*armored_message` with
+/// `free()`.
+///
+/// # Safety
+/// `cert`, `plaintext`, and `armored_message` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_sign_string(
+    cert: *const Certificate,
+    plaintext: *const libc::c_char,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || plaintext.is_null() || armored_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let key = match cert
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+    let keypair = match key.into_keypair() {
+        Ok(keypair) => keypair,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Signer::new(message, keypair).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
+/// Verify an ASCII-armored signed message using the certificate and write the
+/// verified plaintext to `*plaintext`. Caller must free `*plaintext` with
+/// `free()`.
+///
+/// # Safety
+/// `cert`, `armored_message`, and `plaintext` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_string(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    plaintext: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || armored_message.is_null() || plaintext.is_null() {
+        return FFIError::Null as i32;
+    }
+    *plaintext = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = VerifyHelper { cert };
+    let mut verifier = match VerifierBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(verifier) => verifier,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if verifier.read_to_end(&mut out).is_err() {
         return FFIError::Failed as i32;
     }
 
