@@ -2,20 +2,25 @@ use sequoia_openpgp::{
     armor,
     cert::{Cert as SequoiaCert, CertBuilder},
     cert::prelude::*,
-    parse::Parse,
+    crypto::SessionKey,
+    parse::{
+        stream::{DecryptionHelper, DecryptorBuilder, MessageStructure, VerificationHelper},
+        Parse,
+    },
     packet::{
         Key as SequoiaKey,
         key::{UnspecifiedParts, UnspecifiedRole},
+        PKESK, SKESK,
         UserID as SequoiaUserID,
     },
-    policy::StandardPolicy,
-    serialize::stream::{Armorer, Message},
+    policy::{Policy, StandardPolicy},
+    serialize::stream::{Armorer, Encryptor2, LiteralWriter, Message},
     serialize::Serialize,
-    types::{KeyFlags, ReasonForRevocation},
-    Result,
+    types::{KeyFlags, ReasonForRevocation, SymmetricAlgorithm},
+    Fingerprint, KeyHandle, Result,
 };
 use std::ffi::CStr;
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
 use std::ptr;
 
 #[repr(i32)]
@@ -30,6 +35,75 @@ pub enum FFIError {
 pub struct Certificate(*mut SequoiaCert);
 pub struct Key(*mut SequoiaKey<UnspecifiedParts, UnspecifiedRole>);
 pub struct UserID(*mut SequoiaUserID);
+
+unsafe fn write_c_string(value: &str, out: *mut *mut libc::c_char) -> i32 {
+    let bytes = value.as_bytes();
+    let buf = libc::malloc(bytes.len() + 1) as *mut u8;
+    if buf.is_null() {
+        return FFIError::Failed as i32;
+    }
+
+    ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+    *buf.add(bytes.len()) = 0;
+    *out = buf as *mut libc::c_char;
+
+    FFIError::Ok as i32
+}
+
+struct DecryptOnlyHelper<'a> {
+    secret: &'a SequoiaCert,
+    policy: &'a dyn Policy,
+}
+
+impl VerificationHelper for DecryptOnlyHelper<'_> {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> Result<Vec<SequoiaCert>> {
+        Ok(Vec::new())
+    }
+
+    fn check(&mut self, _structure: MessageStructure) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl DecryptionHelper for DecryptOnlyHelper<'_> {
+    fn decrypt<D>(
+        &mut self,
+        pkesks: &[PKESK],
+        _skesks: &[SKESK],
+        sym_algo: Option<SymmetricAlgorithm>,
+        mut decrypt: D,
+    ) -> Result<Option<Fingerprint>>
+    where
+        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
+    {
+        let keys = self
+            .secret
+            .keys()
+            .unencrypted_secret()
+            .with_policy(self.policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+            .map(|key| key.key().clone())
+            .collect::<Vec<_>>();
+
+        for pkesk in pkesks {
+            for key in &keys {
+                let mut keypair = key.clone().into_keypair()?;
+                if pkesk
+                    .decrypt(&mut keypair, sym_algo)
+                    .map(|(algo, session_key)| decrypt(algo, &session_key))
+                    .unwrap_or(false)
+                {
+                    return Ok(Some(key.fingerprint()));
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("No matching decryption key"))
+    }
+}
 
 /// # Safety
 /// `cert` must be non-null and from a `pgp_certificate_*` constructor.
@@ -252,6 +326,119 @@ pub unsafe extern "C" fn pgp_certificate_export_armored(
     armored: *mut *mut libc::c_char,
 ) -> i32 {
     pgp_certificate_export_secret_armored(cert, armored)
+}
+
+/// Encrypt `plaintext` to the certificate and write an ASCII-armored message to
+/// `*armored_message`. Caller must free `*armored_message` with `free()`.
+///
+/// # Safety
+/// `cert`, `plaintext`, and `armored_message` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_encrypt_string(
+    cert: *const Certificate,
+    plaintext: *const libc::c_char,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || plaintext.is_null() || armored_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let recipients = cert
+        .keys()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_transport_encryption()
+        .collect::<Vec<_>>();
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Encryptor2::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
+/// Decrypt an ASCII-armored message using the certificate and write plaintext to
+/// `*plaintext`. Caller must free `*plaintext` with `free()`.
+///
+/// # Safety
+/// `cert`, `armored_message`, and `plaintext` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_decrypt_string(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    plaintext: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || armored_message.is_null() || plaintext.is_null() {
+        return FFIError::Null as i32;
+    }
+    *plaintext = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = DecryptOnlyHelper {
+        secret: cert,
+        policy,
+    };
+    let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(decryptor) => decryptor,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if decryptor.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let text = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    write_c_string(&text, plaintext)
 }
 
 /// Revoke the cert and write the updated cert to `*revoked_cert`.

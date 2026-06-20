@@ -76,6 +76,28 @@ int32_t pgp_certificate_export_secret_armored(const struct Certificate *cert, ch
 int32_t pgp_certificate_export_armored(const struct Certificate *cert, char **armored);
 
 /**
+ * Encrypt `plaintext` to the certificate and write an ASCII-armored message to
+ * `*armored_message`. Caller must free `*armored_message` with `free()`.
+ *
+ * # Safety
+ * `cert`, `plaintext`, and `armored_message` must be non-null.
+ */
+int32_t pgp_certificate_encrypt_string(const struct Certificate *cert,
+                                       const char *plaintext,
+                                       char **armored_message);
+
+/**
+ * Decrypt an ASCII-armored message using the certificate and write plaintext to
+ * `*plaintext`. Caller must free `*plaintext` with `free()`.
+ *
+ * # Safety
+ * `cert`, `armored_message`, and `plaintext` must be non-null.
+ */
+int32_t pgp_certificate_decrypt_string(const struct Certificate *cert,
+                                       const char *armored_message,
+                                       char **plaintext);
+
+/**
  * Revoke the cert and write the updated cert to `*revoked_cert`.
  *
  * # Safety
