@@ -133,13 +133,67 @@ pub unsafe extern "C" fn pgp_key_generate(
     }
 }
 
+/// Export the certificate as an ASCII-armored public key block.
+/// Caller must free `*armored` with `free()`.
+///
+/// # Safety
+/// `cert` and `armored` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_export_public_armored(
+    cert: *const Certificate,
+    armored: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || armored.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    *armored = ptr::null_mut();
+
+    let sequoia_cert = &*wrapper.0;
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let mut armorer = match Armorer::new(message).kind(armor::Kind::PublicKey).build() {
+        Ok(a) => a,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if sequoia_cert.serialize(&mut armorer).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if armorer.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored_string = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let bytes = armored_string.as_bytes();
+    let buf = libc::malloc(bytes.len() + 1) as *mut u8;
+    if buf.is_null() {
+        return FFIError::Failed as i32;
+    }
+
+    ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+    *buf.add(bytes.len()) = 0;
+    *armored = buf as *mut libc::c_char;
+
+    FFIError::Ok as i32
+}
+
 /// Export the certificate as an ASCII-armored secret key block.
 /// Caller must free `*armored` with `free()`.
 ///
 /// # Safety
 /// `cert` and `armored` must be non-null.
 #[no_mangle]
-pub unsafe extern "C" fn pgp_certificate_export_armored(
+pub unsafe extern "C" fn pgp_certificate_export_secret_armored(
     cert: *const Certificate,
     armored: *mut *mut libc::c_char,
 ) -> i32 {
@@ -185,6 +239,19 @@ pub unsafe extern "C" fn pgp_certificate_export_armored(
     *armored = buf as *mut libc::c_char;
 
     FFIError::Ok as i32
+}
+
+/// Export the certificate as an ASCII-armored secret key block.
+/// Caller must free `*armored` with `free()`.
+///
+/// # Safety
+/// `cert` and `armored` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_export_armored(
+    cert: *const Certificate,
+    armored: *mut *mut libc::c_char,
+) -> i32 {
+    pgp_certificate_export_secret_armored(cert, armored)
 }
 
 /// Revoke the cert and write the updated cert to `*revoked_cert`.
@@ -262,6 +329,45 @@ pub unsafe extern "C" fn pgp_certificate_add_transport_encryption_subkey(
 
     let updated = match KeyBuilder::new(KeyFlags::empty().set_transport_encryption())
         .subkey(vc) {
+        Ok(b) => match b.attach_cert() {
+            Ok(c) => c,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
+/// Add a signing subkey, writing the updated cert to `*new_cert`.
+///
+/// # Safety
+/// `cert` and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_add_signing_subkey(
+    cert: *const Certificate,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = (&*wrapper.0).clone();
+
+    let p = &StandardPolicy::new();
+    let vc = match cert.with_policy(p, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match KeyBuilder::new(KeyFlags::empty().set_signing()).subkey(vc) {
         Ok(b) => match b.attach_cert() {
             Ok(c) => c,
             Err(_) => return FFIError::Failed as i32,
