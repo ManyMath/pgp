@@ -269,4 +269,29 @@ int32_t pgp_certificate_verify_detached(const struct Certificate *cert,
                                         const char *plaintext,
                                         const char *armored_sig);
 
+/**
+ * Generate a new certificate carrying `user_id` with an optional validity
+ * period. `validity_seconds == 0` means no expiry.
+ * Writes the new certificate to `*new_cert`. Caller must free with
+ * `pgp_certificate_free`.
+ *
+ * # Safety
+ * `user_id` and `new_cert` must be non-null.
+ */
+int32_t pgp_key_generate_with_expiry(const char *user_id,
+                                     uint64_t validity_seconds,
+                                     struct Certificate **new_cert);
+
+/**
+ * Update the expiry on every key in the certificate. `validity_seconds == 0`
+ * clears the expiry. Writes the updated certificate to `*new_cert`. Caller
+ * must free both the original and the returned certificate separately.
+ *
+ * # Safety
+ * `cert` and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_set_expiry(const struct Certificate *cert,
+                                   uint64_t validity_seconds,
+                                   struct Certificate **new_cert);
+
 #endif  /* pgp_ffi_h */

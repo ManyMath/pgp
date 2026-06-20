@@ -25,7 +25,7 @@ use sequoia_openpgp::{
 use std::ffi::CStr;
 use std::io::{Cursor, Read, Write};
 use std::ptr;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[repr(i32)]
 pub enum FFIError {
@@ -1275,4 +1275,182 @@ pub unsafe extern "C" fn pgp_certificate_verify_detached(
         Ok(_) => FFIError::Ok as i32,
         Err(_) => FFIError::Failed as i32,
     }
+}
+
+/// Generate a new certificate carrying `user_id` with an optional validity
+/// period. `validity_seconds == 0` means no expiry.
+/// Writes the new certificate to `*new_cert`. Caller must free with
+/// `pgp_certificate_free`.
+///
+/// # Safety
+/// `user_id` and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_key_generate_with_expiry(
+    user_id: *const libc::c_char,
+    validity_seconds: u64,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if user_id.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let user_id_str = match CStr::from_ptr(user_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut builder = CertBuilder::new()
+        .add_userid(user_id_str)
+        .add_transport_encryption_subkey()
+        .add_signing_subkey();
+
+    if validity_seconds > 0 {
+        builder = builder.set_validity_period(Duration::from_secs(validity_seconds));
+    }
+
+    match builder.generate() {
+        Ok((cert, _revocation)) => {
+            let inner = Box::into_raw(Box::new(cert));
+            *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+            FFIError::Ok as i32
+        }
+        Err(_) => FFIError::Failed as i32,
+    }
+}
+
+/// Update the expiry on every key in the certificate. `validity_seconds == 0`
+/// clears the expiry. Writes the updated certificate to `*new_cert`. Caller
+/// must free both the original and the returned certificate separately.
+///
+/// # Safety
+/// `cert` and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_set_expiry(
+    cert: *const Certificate,
+    validity_seconds: u64,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+
+    // OpenPGP signature creation times have whole-second resolution, and the
+    // active self-signature is selected by newest creation time. Re-signing
+    // within the same second as the existing binding signatures would tie the
+    // previous signature and could leave the expiry unchanged. Wait until the
+    // wall clock is strictly past the newest existing self-signature so the
+    // refreshed signatures deterministically win, while keeping their creation
+    // time <= now so they are immediately valid when the expiry is read back.
+    {
+        let mut newest: Option<SystemTime> = None;
+        for ka in sequoia_cert.keys() {
+            for sig in ka.self_signatures() {
+                if let Some(t) = sig.signature_creation_time() {
+                    if newest.map_or(true, |n| t > n) {
+                        newest = Some(t);
+                    }
+                }
+            }
+        }
+        for uida in sequoia_cert.userids() {
+            for sig in uida.self_signatures() {
+                if let Some(t) = sig.signature_creation_time() {
+                    if newest.map_or(true, |n| t > n) {
+                        newest = Some(t);
+                    }
+                }
+            }
+        }
+        if let Some(newest) = newest {
+            let target = newest + Duration::from_secs(1);
+            // Cap the wait so a skewed clock (signature far in the future)
+            // cannot hang the call; in that abnormal case we simply proceed.
+            loop {
+                match target.duration_since(SystemTime::now()) {
+                    Ok(remaining) if remaining <= Duration::from_secs(2) => {
+                        std::thread::sleep(remaining);
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
+
+    let expiry: Option<SystemTime> = if validity_seconds > 0 {
+        match SystemTime::now().checked_add(Duration::from_secs(validity_seconds)) {
+            Some(t) => Some(t),
+            None => return FFIError::Invalid as i32,
+        }
+    } else {
+        None
+    };
+
+    let policy = StandardPolicy::new();
+    let vc = match sequoia_cert.with_policy(&policy, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    // Build primary signer from the primary key's secret material.
+    let mut primary_signer = match sequoia_cert
+        .primary_key()
+        .key()
+        .clone()
+        .parts_into_secret()
+    {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    // Collect expiry-update signatures for all keys.
+    let mut all_sigs: Vec<sequoia_openpgp::Packet> = Vec::new();
+
+    // Primary key.
+    match vc.primary_key().set_expiration_time(&mut primary_signer, expiry) {
+        Ok(sigs) => all_sigs.extend(sigs.into_iter().map(|s| s.into())),
+        Err(_) => return FFIError::Failed as i32,
+    }
+
+    // Subkeys: signing subkeys need their own signer; others use the primary.
+    for ka in vc.keys().subkeys() {
+        let is_signing = ka.for_signing();
+        if is_signing {
+            let sub_key = match ka.key().clone().parts_into_secret() {
+                Ok(k) => k,
+                Err(_) => return FFIError::Invalid as i32,
+            };
+            let mut sub_signer = match sub_key.into_keypair() {
+                Ok(kp) => kp,
+                Err(_) => return FFIError::Failed as i32,
+            };
+            match ka.set_expiration_time(&mut primary_signer, Some(&mut sub_signer), expiry) {
+                Ok(sigs) => all_sigs.extend(sigs.into_iter().map(|s| s.into())),
+                Err(_) => return FFIError::Failed as i32,
+            }
+        } else {
+            match ka.set_expiration_time(&mut primary_signer, None, expiry) {
+                Ok(sigs) => all_sigs.extend(sigs.into_iter().map(|s| s.into())),
+                Err(_) => return FFIError::Failed as i32,
+            }
+        }
+    }
+
+    let updated = match sequoia_cert.insert_packets(all_sigs) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
 }
