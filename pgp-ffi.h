@@ -193,4 +193,32 @@ int32_t pgp_certificate_revoke_userid(const struct Certificate *cert,
                                       const char *user_id,
                                       struct Certificate **new_cert);
 
+/**
+ * Return the primary key fingerprint as an uppercase hex string.
+ * Caller must free `*out` with `free()`.
+ *
+ * # Safety
+ * `cert` and `out` must be non-null.
+ */
+int32_t pgp_certificate_fingerprint(const struct Certificate *cert, char **out);
+
+/**
+ * Return all user IDs as a newline-delimited UTF-8 string.
+ * Includes revoked and expired user IDs (raw, unfiltered).
+ * Caller must free `*out` with `free()`.
+ *
+ * # Safety
+ * `cert` and `out` must be non-null.
+ */
+int32_t pgp_certificate_userids(const struct Certificate *cert, char **out);
+
+/**
+ * Write the primary key expiration as seconds since the Unix epoch into `*out`.
+ * Writes 0 if the certificate has no expiry or if the policy check fails.
+ *
+ * # Safety
+ * `cert` and `out` must be non-null.
+ */
+int32_t pgp_certificate_expiry_epoch(const struct Certificate *cert, int64_t *out);
+
 #endif  /* pgp_ffi_h */

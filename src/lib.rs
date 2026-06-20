@@ -25,6 +25,7 @@ use sequoia_openpgp::{
 use std::ffi::CStr;
 use std::io::{Cursor, Read, Write};
 use std::ptr;
+use std::time::UNIX_EPOCH;
 
 #[repr(i32)]
 pub enum FFIError {
@@ -976,5 +977,88 @@ pub unsafe extern "C" fn pgp_certificate_revoke_userid(
 
     let inner = Box::into_raw(Box::new(updated));
     *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
+/// Return the primary key fingerprint as an uppercase hex string.
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `cert` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_fingerprint(
+    cert: *const Certificate,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let fp = (&*wrapper.0).fingerprint().to_hex();
+    write_c_string(&fp, out)
+}
+
+/// Return all user IDs as a newline-delimited UTF-8 string.
+/// Includes revoked and expired user IDs (raw, unfiltered).
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `cert` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_userids(
+    cert: *const Certificate,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let ids: Vec<String> = (&*wrapper.0)
+        .userids()
+        .map(|ua| String::from_utf8_lossy(ua.userid().value()).into_owned())
+        .collect();
+    let joined = ids.join("\n");
+    write_c_string(&joined, out)
+}
+
+/// Write the primary key expiration as seconds since the Unix epoch into `*out`.
+/// Writes 0 if the certificate has no expiry or if the policy check fails.
+///
+/// # Safety
+/// `cert` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_expiry_epoch(
+    cert: *const Certificate,
+    out: *mut i64,
+) -> i32 {
+    if cert.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = 0;
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+    let policy = StandardPolicy::new();
+    let epoch_secs: i64 = match sequoia_cert.with_policy(&policy, None) {
+        Ok(vc) => match vc.primary_key().key_expiration_time() {
+            Some(t) => t
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+            None => 0,
+        },
+        Err(_) => 0,
+    };
+    *out = epoch_secs;
     FFIError::Ok as i32
 }
