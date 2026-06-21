@@ -54,6 +54,19 @@ unsafe fn write_c_string(value: &str, out: *mut *mut libc::c_char) -> i32 {
     FFIError::Ok as i32
 }
 
+unsafe fn write_bytes_buffer(data: &[u8], out: *mut *mut u8, out_len: *mut usize) -> i32 {
+    let buf = libc::malloc(data.len().max(1)) as *mut u8;
+    if buf.is_null() {
+        return FFIError::Failed as i32;
+    }
+    if !data.is_empty() {
+        ptr::copy_nonoverlapping(data.as_ptr(), buf, data.len());
+    }
+    *out = buf;
+    *out_len = data.len();
+    FFIError::Ok as i32
+}
+
 struct DecryptOnlyHelper<'a> {
     secret: &'a SequoiaCert,
     policy: &'a dyn Policy,
@@ -1730,4 +1743,356 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_string(
         *plaintext_out = ptr::null_mut();
     }
     r
+}
+
+// -- Feature 2: Binary data (bytes API)
+
+/// Encrypt `data` (raw bytes, `len` long) to the certificate and write an
+/// ASCII-armored message to `*armored_message`. Caller must free
+/// `*armored_message` with `free()`.
+///
+/// # Safety
+/// `cert`, `data`, and `armored_message` must be non-null; `data` must point
+/// to at least `len` valid bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_encrypt_bytes(
+    cert: *const Certificate,
+    data: *const u8,
+    len: usize,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || data.is_null() || armored_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    // `from_raw_parts` requires a valid, non-dangling pointer even when
+    // `len == 0`; callers commonly pass a sentinel for empty buffers, so map
+    // the empty case to an explicit empty slice instead.
+    let plaintext_bytes: &[u8] = if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data, len)
+    };
+
+    let policy = &StandardPolicy::new();
+    let recipients = cert
+        .keys()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_transport_encryption()
+        .collect::<Vec<_>>();
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Encryptor2::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
+/// Decrypt an ASCII-armored message using the certificate and write the raw
+/// plaintext bytes to `*plaintext_out` (length in `*plaintext_len`). Caller
+/// must free `*plaintext_out` with `free()`.
+///
+/// # Safety
+/// `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
+/// non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_decrypt_bytes(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    plaintext_out: *mut *mut u8,
+    plaintext_len: *mut usize,
+) -> i32 {
+    if cert.is_null()
+        || armored_message.is_null()
+        || plaintext_out.is_null()
+        || plaintext_len.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *plaintext_out = ptr::null_mut();
+    *plaintext_len = 0;
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = DecryptOnlyHelper {
+        secret: cert,
+        policy,
+    };
+    let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(d) => d,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if decryptor.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    write_bytes_buffer(&out, plaintext_out, plaintext_len)
+}
+
+/// Sign `data` (raw bytes, `len` long) with the certificate and write an
+/// ASCII-armored signed message to `*armored_message`. Caller must free
+/// `*armored_message` with `free()`.
+///
+/// # Safety
+/// `cert`, `data`, and `armored_message` must be non-null; `data` must point
+/// to at least `len` valid bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_sign_bytes(
+    cert: *const Certificate,
+    data: *const u8,
+    len: usize,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || data.is_null() || armored_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    // `from_raw_parts` requires a valid, non-dangling pointer even when
+    // `len == 0`; callers commonly pass a sentinel for empty buffers, so map
+    // the empty case to an explicit empty slice instead.
+    let plaintext_bytes: &[u8] = if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data, len)
+    };
+
+    let policy = &StandardPolicy::new();
+    let key = match cert
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+    let keypair = match key.into_keypair() {
+        Ok(kp) => kp,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Signer::new(message, keypair).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
+/// Verify an ASCII-armored signed message and write the verified raw bytes to
+/// `*plaintext_out` (length in `*plaintext_len`). Caller must free
+/// `*plaintext_out` with `free()`.
+///
+/// # Safety
+/// `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
+/// non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_bytes(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    plaintext_out: *mut *mut u8,
+    plaintext_len: *mut usize,
+) -> i32 {
+    if cert.is_null()
+        || armored_message.is_null()
+        || plaintext_out.is_null()
+        || plaintext_len.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *plaintext_out = ptr::null_mut();
+    *plaintext_len = 0;
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = VerifyHelper { cert };
+    let mut verifier = match VerifierBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(v) => v,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if verifier.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    write_bytes_buffer(&out, plaintext_out, plaintext_len)
+}
+
+/// Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
+/// and write an ASCII-armored message to `*armored_message`. Caller must free
+/// `*armored_message` with `free()`.
+///
+/// # Safety
+/// `certs`, `data`, and `armored_message` must be non-null; `data` must point
+/// to at least `len` valid bytes; each element of `certs` must be a valid
+/// Certificate pointer.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_encrypt_bytes_to_recipients(
+    certs: *const *const Certificate,
+    count: usize,
+    data: *const u8,
+    len: usize,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if certs.is_null() || data.is_null() || armored_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    if count == 0 {
+        return FFIError::NotFound as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let policy = StandardPolicy::new();
+    // `from_raw_parts` requires a valid, non-dangling pointer even when
+    // `len == 0`; callers commonly pass a sentinel for empty buffers, so map
+    // the empty case to an explicit empty slice instead.
+    let plaintext_bytes: &[u8] = if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data, len)
+    };
+
+    let mut cert_vec: Vec<SequoiaCert> = Vec::with_capacity(count);
+    for i in 0..count {
+        let outer_ptr = *certs.add(i);
+        if outer_ptr.is_null() {
+            return FFIError::Null as i32;
+        }
+        let wrapper = &*outer_ptr;
+        if wrapper.0.is_null() {
+            return FFIError::Invalid as i32;
+        }
+        cert_vec.push((&*wrapper.0).clone());
+    }
+
+    let mut recipients: Vec<_> = Vec::new();
+    for cert in cert_vec.iter() {
+        for ka in cert
+            .keys()
+            .with_policy(&policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+        {
+            recipients.push(ka);
+        }
+    }
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Encryptor2::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
 }

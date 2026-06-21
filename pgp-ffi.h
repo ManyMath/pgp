@@ -324,4 +324,76 @@ int32_t pgp_decrypt_and_verify_string(const struct Certificate *decrypt_cert,
                                       char **plaintext_out,
                                       char **fingerprint_out);
 
+/**
+ * Encrypt `data` (raw bytes, `len` long) to the certificate and write an
+ * ASCII-armored message to `*armored_message`. Caller must free
+ * `*armored_message` with `free()`.
+ *
+ * # Safety
+ * `cert`, `data`, and `armored_message` must be non-null; `data` must point
+ * to at least `len` valid bytes.
+ */
+int32_t pgp_certificate_encrypt_bytes(const struct Certificate *cert,
+                                      const uint8_t *data,
+                                      uintptr_t len,
+                                      char **armored_message);
+
+/**
+ * Decrypt an ASCII-armored message using the certificate and write the raw
+ * plaintext bytes to `*plaintext_out` (length in `*plaintext_len`). Caller
+ * must free `*plaintext_out` with `free()`.
+ *
+ * # Safety
+ * `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
+ * non-null.
+ */
+int32_t pgp_certificate_decrypt_bytes(const struct Certificate *cert,
+                                      const char *armored_message,
+                                      uint8_t **plaintext_out,
+                                      uintptr_t *plaintext_len);
+
+/**
+ * Sign `data` (raw bytes, `len` long) with the certificate and write an
+ * ASCII-armored signed message to `*armored_message`. Caller must free
+ * `*armored_message` with `free()`.
+ *
+ * # Safety
+ * `cert`, `data`, and `armored_message` must be non-null; `data` must point
+ * to at least `len` valid bytes.
+ */
+int32_t pgp_certificate_sign_bytes(const struct Certificate *cert,
+                                   const uint8_t *data,
+                                   uintptr_t len,
+                                   char **armored_message);
+
+/**
+ * Verify an ASCII-armored signed message and write the verified raw bytes to
+ * `*plaintext_out` (length in `*plaintext_len`). Caller must free
+ * `*plaintext_out` with `free()`.
+ *
+ * # Safety
+ * `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
+ * non-null.
+ */
+int32_t pgp_certificate_verify_bytes(const struct Certificate *cert,
+                                     const char *armored_message,
+                                     uint8_t **plaintext_out,
+                                     uintptr_t *plaintext_len);
+
+/**
+ * Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
+ * and write an ASCII-armored message to `*armored_message`. Caller must free
+ * `*armored_message` with `free()`.
+ *
+ * # Safety
+ * `certs`, `data`, and `armored_message` must be non-null; `data` must point
+ * to at least `len` valid bytes; each element of `certs` must be a valid
+ * Certificate pointer.
+ */
+int32_t pgp_encrypt_bytes_to_recipients(const struct Certificate *const *certs,
+                                        uintptr_t count,
+                                        const uint8_t *data,
+                                        uintptr_t len,
+                                        char **armored_message);
+
 #endif  /* pgp_ffi_h */
