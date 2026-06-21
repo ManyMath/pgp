@@ -1,3 +1,0 @@
-[submodule "pgp-ffi"]
-	path = pgp-ffi
-	url = git@github.com:ManyMath/pgp-ffi
