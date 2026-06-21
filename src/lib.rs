@@ -2210,3 +2210,142 @@ pub unsafe extern "C" fn pgp_certificate_verify_cleartext(
     };
     write_c_string(&text, plaintext_out)
 }
+
+// -- Feature 4: Symmetric encryption (passphrase-only)
+
+struct SymmetricDecryptHelper {
+    password: Password,
+}
+
+impl VerificationHelper for SymmetricDecryptHelper {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> Result<Vec<SequoiaCert>> {
+        Ok(Vec::new())
+    }
+
+    fn check(&mut self, _structure: MessageStructure) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl DecryptionHelper for SymmetricDecryptHelper {
+    fn decrypt<D>(
+        &mut self,
+        _pkesks: &[PKESK],
+        skesks: &[SKESK],
+        _sym_algo: Option<SymmetricAlgorithm>,
+        mut decrypt: D,
+    ) -> Result<Option<Fingerprint>>
+    where
+        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
+    {
+        for skesk in skesks {
+            if let Ok((algo, session_key)) = skesk.decrypt(&self.password) {
+                if decrypt(algo, &session_key) {
+                    return Ok(None);
+                }
+            }
+        }
+        Err(anyhow::anyhow!("Bad passphrase or no SKESK"))
+    }
+}
+
+/// Encrypt `plaintext` with `passphrase` (no public key required), writing an
+/// ASCII-armored message to `*armored_message`. Caller must free
+/// `*armored_message` with `free()`.
+///
+/// # Safety
+/// `plaintext`, `passphrase`, and `armored_message` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_encrypt_string_symmetric(
+    plaintext: *const libc::c_char,
+    passphrase: *const libc::c_char,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if plaintext.is_null() || passphrase.is_null() || armored_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+    let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let password: Password = passphrase_str.into();
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Encryptor2::with_passwords(message, Some(password)).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
+/// Decrypt an ASCII-armored passphrase-encrypted message, writing plaintext to
+/// `*plaintext_out`. Caller must free `*plaintext_out` with `free()`.
+///
+/// Returns `Failed` (-3) if the passphrase is wrong or the message has no SKESK.
+///
+/// # Safety
+/// `armored_message`, `passphrase`, and `plaintext_out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_string_symmetric(
+    armored_message: *const libc::c_char,
+    passphrase: *const libc::c_char,
+    plaintext_out: *mut *mut libc::c_char,
+) -> i32 {
+    if armored_message.is_null() || passphrase.is_null() || plaintext_out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *plaintext_out = ptr::null_mut();
+
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+    let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let password: Password = passphrase_str.into();
+
+    let policy = &StandardPolicy::new();
+    let helper = SymmetricDecryptHelper { password };
+
+    let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(d) => d,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if decryptor.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let text = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    write_c_string(&text, plaintext_out)
+}

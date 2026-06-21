@@ -420,4 +420,29 @@ int32_t pgp_certificate_verify_cleartext(const struct Certificate *cert,
                                          const char *signed_message,
                                          char **plaintext_out);
 
+/**
+ * Encrypt `plaintext` with `passphrase` (no public key required), writing an
+ * ASCII-armored message to `*armored_message`. Caller must free
+ * `*armored_message` with `free()`.
+ *
+ * # Safety
+ * `plaintext`, `passphrase`, and `armored_message` must be non-null.
+ */
+int32_t pgp_encrypt_string_symmetric(const char *plaintext,
+                                     const char *passphrase,
+                                     char **armored_message);
+
+/**
+ * Decrypt an ASCII-armored passphrase-encrypted message, writing plaintext to
+ * `*plaintext_out`. Caller must free `*plaintext_out` with `free()`.
+ *
+ * Returns `Failed` (-3) if the passphrase is wrong or the message has no SKESK.
+ *
+ * # Safety
+ * `armored_message`, `passphrase`, and `plaintext_out` must be non-null.
+ */
+int32_t pgp_decrypt_string_symmetric(const char *armored_message,
+                                     const char *passphrase,
+                                     char **plaintext_out);
+
 #endif  /* pgp_ffi_h */
