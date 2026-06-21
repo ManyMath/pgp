@@ -396,4 +396,28 @@ int32_t pgp_encrypt_bytes_to_recipients(const struct Certificate *const *certs,
                                         uintptr_t len,
                                         char **armored_message);
 
+/**
+ * Sign `plaintext` with the certificate using the Cleartext Signature
+ * Framework (RFC 4880 section 7), writing a "BEGIN PGP SIGNED MESSAGE" block to
+ * `*signed_message`. Caller must free `*signed_message` with `free()`.
+ *
+ * # Safety
+ * `cert`, `plaintext`, and `signed_message` must be non-null.
+ */
+int32_t pgp_certificate_sign_cleartext(const struct Certificate *cert,
+                                       const char *plaintext,
+                                       char **signed_message);
+
+/**
+ * Verify a "BEGIN PGP SIGNED MESSAGE" cleartext-signed message using the
+ * certificate. Writes the plaintext to `*plaintext_out`. Caller must free
+ * `*plaintext_out` with `free()`.
+ *
+ * # Safety
+ * `cert`, `signed_message`, and `plaintext_out` must be non-null.
+ */
+int32_t pgp_certificate_verify_cleartext(const struct Certificate *cert,
+                                         const char *signed_message,
+                                         char **plaintext_out);
+
 #endif  /* pgp_ffi_h */

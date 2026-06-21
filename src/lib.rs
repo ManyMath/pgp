@@ -2096,3 +2096,117 @@ pub unsafe extern "C" fn pgp_encrypt_bytes_to_recipients(
     };
     write_c_string(&armored, armored_message)
 }
+
+// -- Feature 3: Cleartext signatures
+
+/// Sign `plaintext` with the certificate using the Cleartext Signature
+/// Framework (RFC 4880 section 7), writing a "BEGIN PGP SIGNED MESSAGE" block to
+/// `*signed_message`. Caller must free `*signed_message` with `free()`.
+///
+/// # Safety
+/// `cert`, `plaintext`, and `signed_message` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_sign_cleartext(
+    cert: *const Certificate,
+    plaintext: *const libc::c_char,
+    signed_message: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || plaintext.is_null() || signed_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    *signed_message = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let key = match cert
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+    let keypair = match key.into_keypair() {
+        Ok(kp) => kp,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    // Cleartext mode: no Armorer, no LiteralWriter - write directly to Signer.
+    let mut signer = match Signer::new(message, keypair).cleartext().build() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if signer.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if signer.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let result = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&result, signed_message)
+}
+
+/// Verify a "BEGIN PGP SIGNED MESSAGE" cleartext-signed message using the
+/// certificate. Writes the plaintext to `*plaintext_out`. Caller must free
+/// `*plaintext_out` with `free()`.
+///
+/// # Safety
+/// `cert`, `signed_message`, and `plaintext_out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_cleartext(
+    cert: *const Certificate,
+    signed_message: *const libc::c_char,
+    plaintext_out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || signed_message.is_null() || plaintext_out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *plaintext_out = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let msg_bytes = CStr::from_ptr(signed_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = VerifyHelper { cert };
+    // VerifierBuilder handles cleartext signatures transparently.
+    let mut verifier = match VerifierBuilder::from_bytes(msg_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(v) => v,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if verifier.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let text = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    write_c_string(&text, plaintext_out)
+}
