@@ -10,27 +10,11 @@
 
 typedef struct Certificate Certificate;
 
-typedef struct Key Key;
-
-typedef struct UserID UserID;
-
 /**
  * # Safety
  * `cert` must be non-null and from a `pgp_certificate_*` constructor.
  */
 void pgp_certificate_free(struct Certificate *cert);
-
-/**
- * # Safety
- * `key` must be non-null and from a `pgp_key_*` constructor.
- */
-void pgp_key_free(struct Key *key);
-
-/**
- * # Safety
- * `user_id` must be non-null and from a `pgp_user_id_*` constructor.
- */
-void pgp_user_id_free(struct UserID *user_id);
 
 /**
  * Parse an ASCII-armored PGP cert into `*cert`.

@@ -9,7 +9,7 @@ use crate::openpgp::serialize::stream::{Armorer, Message, Encryptor2, LiteralWri
 use crate::openpgp::parse::{Parse, stream::*};
 use crate::openpgp::policy::Policy;
 use crate::openpgp::policy::StandardPolicy as P;
-use sequoia_openpgp::serialize::Serialize;
+use sequoia_openpgp::serialize::Marshal;
 
 const MESSAGE: &str = "Hello, world!"; // Message to encrypt and decrypt.
 
@@ -44,12 +44,14 @@ fn main() -> openpgp::Result<()> {
 
 /// Generates an encryption-capable key.
 fn generate() -> openpgp::Result<openpgp::Cert> {
-    let (cert, _revocation) = CertBuilder::new()
+    let (cert, revocation) = CertBuilder::new()
         .add_userid("someone@example.org")
         .add_transport_encryption_subkey()
         .generate()?;
 
-    // TODO: Save the revocation certificate _revocation.
+    let mut revocation_bytes = Vec::new();
+    revocation.serialize(&mut revocation_bytes)?;
+    std::fs::write("revocation.sig", &revocation_bytes)?;
 
     Ok(cert)
 }
@@ -177,8 +179,6 @@ impl<'a> DecryptionHelper for Helper<'a> {
             .decrypt(&mut pair, sym_algo)
             .map(|(algo, session_key)| decrypt(algo, &session_key));
 
-        // TODO: In production code, return the Fingerprint of the
-        // recipient's Cert here.
-        Ok(None)
+        Ok(Some(self.secret.fingerprint()))
     }
 }

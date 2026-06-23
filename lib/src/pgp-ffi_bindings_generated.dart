@@ -41,38 +41,6 @@ class PgpFfiBindings {
   late final _pgp_certificate_free = _pgp_certificate_freePtr
       .asFunction<void Function(ffi.Pointer<Certificate>)>();
 
-  /// # Safety
-  /// `key` must be non-null and from a `pgp_key_*` constructor.
-  void pgp_key_free(
-    ffi.Pointer<Key> key,
-  ) {
-    return _pgp_key_free(
-      key,
-    );
-  }
-
-  late final _pgp_key_freePtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<Key>)>>(
-          'pgp_key_free');
-  late final _pgp_key_free =
-      _pgp_key_freePtr.asFunction<void Function(ffi.Pointer<Key>)>();
-
-  /// # Safety
-  /// `user_id` must be non-null and from a `pgp_user_id_*` constructor.
-  void pgp_user_id_free(
-    ffi.Pointer<UserID> user_id,
-  ) {
-    return _pgp_user_id_free(
-      user_id,
-    );
-  }
-
-  late final _pgp_user_id_freePtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UserID>)>>(
-          'pgp_user_id_free');
-  late final _pgp_user_id_free =
-      _pgp_user_id_freePtr.asFunction<void Function(ffi.Pointer<UserID>)>();
-
   /// Parse an ASCII-armored PGP cert into `*cert`.
   ///
   /// # Safety
@@ -1107,7 +1075,3 @@ class PgpFfiBindings {
 }
 
 final class Certificate extends ffi.Opaque {}
-
-final class Key extends ffi.Opaque {}
-
-final class UserID extends ffi.Opaque {}

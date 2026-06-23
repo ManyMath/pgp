@@ -10,12 +10,7 @@ use sequoia_openpgp::{
         },
         Parse,
     },
-    packet::{
-        Key as SequoiaKey,
-        key::{UnspecifiedParts, UnspecifiedRole},
-        PKESK, SKESK,
-        UserID as SequoiaUserID,
-    },
+    packet::{PKESK, SKESK, UserID as SequoiaUserID},
     policy::{Policy, StandardPolicy},
     serialize::stream::{Armorer, Encryptor2, LiteralWriter, Message, Signer},
     serialize::Serialize,
@@ -37,8 +32,6 @@ pub enum FFIError {
 }
 
 pub struct Certificate(*mut SequoiaCert);
-pub struct Key(*mut SequoiaKey<UnspecifiedParts, UnspecifiedRole>);
-pub struct UserID(*mut SequoiaUserID);
 
 unsafe fn write_c_string(value: &str, out: *mut *mut libc::c_char) -> i32 {
     let bytes = value.as_bytes();
@@ -160,30 +153,6 @@ impl DecryptionHelper for DecryptOnlyHelper<'_> {
 pub unsafe extern "C" fn pgp_certificate_free(cert: *mut Certificate) {
     if !cert.is_null() {
         let wrapper = Box::from_raw(cert);
-        if !wrapper.0.is_null() {
-            drop(Box::from_raw(wrapper.0));
-        }
-    }
-}
-
-/// # Safety
-/// `key` must be non-null and from a `pgp_key_*` constructor.
-#[no_mangle]
-pub unsafe extern "C" fn pgp_key_free(key: *mut Key) {
-    if !key.is_null() {
-        let wrapper = Box::from_raw(key);
-        if !wrapper.0.is_null() {
-            drop(Box::from_raw(wrapper.0));
-        }
-    }
-}
-
-/// # Safety
-/// `user_id` must be non-null and from a `pgp_user_id_*` constructor.
-#[no_mangle]
-pub unsafe extern "C" fn pgp_user_id_free(user_id: *mut UserID) {
-    if !user_id.is_null() {
-        let wrapper = Box::from_raw(user_id);
         if !wrapper.0.is_null() {
             drop(Box::from_raw(wrapper.0));
         }
