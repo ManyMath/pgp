@@ -1,0 +1,141 @@
+name: pgp-ffi release
+
+on:
+  pull_request:
+    paths:
+      - "pgp-ffi/**"
+      - ".github/workflows/pgp-ffi-release.yml"
+  push:
+    tags:
+      - "pgp-ffi-v*"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-header:
+    name: Header is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path pgp-ffi/Cargo.toml
+      - name: Fail if cbindgen output drifted from the committed header
+        run: git diff --exit-code -- pgp-ffi/pgp-ffi.h
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: check-header
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            lib_file: libpgp_ffi.so
+            cross: false
+            smoke_test: true
+          - name: linux-aarch64
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            lib_file: libpgp_ffi.so
+            cross: true
+            smoke_test: false # cross-compiled; runner can't execute an aarch64 binary
+          - name: macos-x86_64
+            runner: macos-13
+            target: x86_64-apple-darwin
+            lib_file: libpgp_ffi.dylib
+            cross: false
+            smoke_test: true
+          - name: macos-aarch64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            lib_file: libpgp_ffi.dylib
+            cross: false
+            smoke_test: true
+          - name: windows-x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            lib_file: pgp_ffi.dll
+            cross: false
+            smoke_test: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        shell: bash
+        run: cargo build --release --manifest-path pgp-ffi/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        shell: bash
+        run: cross build --release --manifest-path pgp-ffi/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Set up Dart
+        if: matrix.smoke_test
+        uses: dart-lang/setup-dart@v1
+
+      - name: Smoke test the built artifact against the Dart test suite
+        if: matrix.smoke_test
+        shell: bash
+        run: |
+          mkdir -p pgp-ffi/target/release
+          cp pgp-ffi/target/${{ matrix.target }}/release/${{ matrix.lib_file }} pgp-ffi/target/release/
+          dart pub get
+          dart test
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$(mktemp -d)"
+          cp pgp-ffi/target/${{ matrix.target }}/release/${{ matrix.lib_file }} "$stage/"
+          archive="pgp-ffi-${{ matrix.name }}"
+          if [[ "${{ matrix.runner }}" == windows-* ]]; then
+            (cd "$stage" && 7z a "${GITHUB_WORKSPACE}/${archive}.zip" "${{ matrix.lib_file }}")
+            sha256sum "${archive}.zip" > "${archive}.zip.sha256"
+          else
+            tar -C "$stage" -czf "${archive}.tar.gz" "${{ matrix.lib_file }}"
+            shasum -a 256 "${archive}.tar.gz" > "${archive}.tar.gz.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgp-ffi-${{ matrix.name }}
+          path: |
+            pgp-ffi-${{ matrix.name }}.tar.gz
+            pgp-ffi-${{ matrix.name }}.tar.gz.sha256
+            pgp-ffi-${{ matrix.name }}.zip
+            pgp-ffi-${{ matrix.name }}.zip.sha256
+          if-no-files-found: ignore
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/pgp-ffi-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
