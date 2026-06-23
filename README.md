@@ -56,9 +56,8 @@ dart run example/pgp_example.dart
 
 ## Building the native library
 The package loads `libpgp_ffi` at runtime via `DynamicLibrary.open`. The crate
-lives in the `pgp-ffi` git submodule; build it with `cargo`:
+lives in `pgp-ffi/`, vendored as a git subtree; build it with `cargo`:
 ```sh
-git submodule update --init   # fetch pgp-ffi if needed
 cargo build --release --manifest-path pgp-ffi/Cargo.toml
 ```
 The artifact lands in `pgp-ffi/target/release/`: `libpgp_ffi.so` (Linux),
