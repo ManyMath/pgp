@@ -248,28 +248,41 @@ class PgpFfiBindings {
   /// verified plaintext to `*plaintext`. Caller must free `*plaintext` with
   /// `free()`.
   ///
+  /// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+  /// produced the valid signature is written to `*signer_fingerprint` (caller
+  /// must free with `free()`). Pass null if the signer identity isn't needed.
+  ///
   /// # Safety
   /// `cert`, `armored_message`, and `plaintext` must be non-null.
+  /// `signer_fingerprint` may be null.
   int pgp_certificate_verify_string(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
   ) {
     return _pgp_certificate_verify_string(
       cert,
       armored_message,
       plaintext,
+      signer_fingerprint,
     );
   }
 
   late final _pgp_certificate_verify_stringPtr = _lookup<
           ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
       'pgp_certificate_verify_string');
   late final _pgp_certificate_verify_string =
       _pgp_certificate_verify_stringPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   /// Revoke the cert and write the updated cert to `*revoked_cert`.
@@ -687,28 +700,39 @@ class PgpFfiBindings {
   /// Verify a detached signature `armored_sig` against `plaintext` using the
   /// certificate. Returns 0 if valid, negative on failure.
   ///
+  /// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+  /// produced the valid signature is written to `*signer_fingerprint` (caller
+  /// must free with `free()`). Pass null if the signer identity isn't needed.
+  ///
   /// # Safety
   /// `cert`, `plaintext`, and `armored_sig` must be non-null.
+  /// `signer_fingerprint` may be null.
   int pgp_certificate_verify_detached(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> plaintext,
     ffi.Pointer<ffi.Char> armored_sig,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
   ) {
     return _pgp_certificate_verify_detached(
       cert,
       plaintext,
       armored_sig,
+      signer_fingerprint,
     );
   }
 
   late final _pgp_certificate_verify_detachedPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>>('pgp_certificate_verify_detached');
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_verify_detached');
   late final _pgp_certificate_verify_detached =
       _pgp_certificate_verify_detachedPtr.asFunction<
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>();
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   /// Generate a new certificate carrying `user_id` with an optional validity
   /// period. `validity_seconds == 0` means no expiry.
@@ -954,34 +978,46 @@ class PgpFfiBindings {
   /// `*plaintext_out` (length in `*plaintext_len`). Caller must free
   /// `*plaintext_out` with `free()`.
   ///
+  /// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+  /// produced the valid signature is written to `*signer_fingerprint` (caller
+  /// must free with `free()`). Pass null if the signer identity isn't needed.
+  ///
   /// # Safety
   /// `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
-  /// non-null.
+  /// non-null. `signer_fingerprint` may be null.
   int pgp_certificate_verify_bytes(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Pointer<ffi.Uint8>> plaintext_out,
     ffi.Pointer<ffi.UintPtr> plaintext_len,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
   ) {
     return _pgp_certificate_verify_bytes(
       cert,
       armored_message,
       plaintext_out,
       plaintext_len,
+      signer_fingerprint,
     );
   }
 
   late final _pgp_certificate_verify_bytesPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+                  ffi.Pointer<ffi.UintPtr>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_verify_bytes');
+  late final _pgp_certificate_verify_bytes =
+      _pgp_certificate_verify_bytesPtr.asFunction<
+          int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-              ffi.Pointer<ffi.UintPtr>)>>('pgp_certificate_verify_bytes');
-  late final _pgp_certificate_verify_bytes =
-      _pgp_certificate_verify_bytesPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Uint8>>, ffi.Pointer<ffi.UintPtr>)>();
+              ffi.Pointer<ffi.UintPtr>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   /// Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
   /// and write an ASCII-armored message to `*armored_message`. Caller must free
@@ -1057,28 +1093,41 @@ class PgpFfiBindings {
   /// certificate. Writes the plaintext to `*plaintext_out`. Caller must free
   /// `*plaintext_out` with `free()`.
   ///
+  /// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+  /// produced the valid signature is written to `*signer_fingerprint` (caller
+  /// must free with `free()`). Pass null if the signer identity isn't needed.
+  ///
   /// # Safety
   /// `cert`, `signed_message`, and `plaintext_out` must be non-null.
+  /// `signer_fingerprint` may be null.
   int pgp_certificate_verify_cleartext(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> signed_message,
     ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext_out,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
   ) {
     return _pgp_certificate_verify_cleartext(
       cert,
       signed_message,
       plaintext_out,
+      signer_fingerprint,
     );
   }
 
   late final _pgp_certificate_verify_cleartextPtr = _lookup<
           ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
       'pgp_certificate_verify_cleartext');
   late final _pgp_certificate_verify_cleartext =
       _pgp_certificate_verify_cleartextPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   /// Encrypt `plaintext` with `passphrase` (no public key required), writing an
