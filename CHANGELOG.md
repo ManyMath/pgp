@@ -4,6 +4,10 @@
   subkey (fingerprint, capabilities, revocation status) using the same
   zero-based indexing as `revokeSubkey`, so callers no longer have to guess
   subkey indices.
+- `Certificate.revoke`, `revokeSubkey`, and `revokeUserId` accept optional
+  `reason` (a new `RevocationReason` enum) and `message` parameters, so the
+  revocation signature records why a key, subkey, or user ID was revoked
+  instead of always using a fixed, unspecified reason.
 
 ## 0.0.1-dev.7
 
