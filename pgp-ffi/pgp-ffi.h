@@ -108,10 +108,19 @@ int32_t pgp_certificate_verify_string(const struct Certificate *cert,
 /**
  * Revoke the cert and write the updated cert to `*revoked_cert`.
  *
+ * `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
+ * 1 = superseded, 2 = compromised, 3 = retired); other values are recorded
+ * as-is. `message` is an optional human-readable explanation; pass null for
+ * none.
+ *
  * # Safety
- * `cert` and `revoked_cert` must be non-null.
+ * `cert` and `revoked_cert` must be non-null. `message`, if non-null, must
+ * be a valid NUL-terminated C string.
  */
-int32_t pgp_certificate_revoke(const struct Certificate *cert, struct Certificate **revoked_cert);
+int32_t pgp_certificate_revoke(const struct Certificate *cert,
+                               uint8_t reason,
+                               const char *message,
+                               struct Certificate **revoked_cert);
 
 /**
  * Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
@@ -134,11 +143,19 @@ int32_t pgp_certificate_add_signing_subkey(const struct Certificate *cert,
 /**
  * Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
  *
+ * `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
+ * 1 = superseded, 2 = compromised, 3 = retired); other values are recorded
+ * as-is. `message` is an optional human-readable explanation; pass null for
+ * none.
+ *
  * # Safety
- * `cert` and `new_cert` must be non-null.
+ * `cert` and `new_cert` must be non-null. `message`, if non-null, must be a
+ * valid NUL-terminated C string.
  */
 int32_t pgp_certificate_revoke_subkey(const struct Certificate *cert,
                                       uint32_t subkey_index,
+                                      uint8_t reason,
+                                      const char *message,
                                       struct Certificate **new_cert);
 
 /**
@@ -170,11 +187,18 @@ int32_t pgp_encrypt_string_to_recipients(const struct Certificate *const *certs,
 /**
  * Revoke the exact-match user ID, writing the updated cert to `*new_cert`.
  *
+ * `reason` is an RFC 4880 reason-for-revocation code (32 = user ID no
+ * longer valid, 0 = unspecified); other values are recorded as-is.
+ * `message` is an optional human-readable explanation; pass null for none.
+ *
  * # Safety
- * `cert`, `user_id`, and `new_cert` must be non-null.
+ * `cert`, `user_id`, and `new_cert` must be non-null. `message`, if
+ * non-null, must be a valid NUL-terminated C string.
  */
 int32_t pgp_certificate_revoke_userid(const struct Certificate *cert,
                                       const char *user_id,
+                                      uint8_t reason,
+                                      const char *message,
                                       struct Certificate **new_cert);
 
 /**

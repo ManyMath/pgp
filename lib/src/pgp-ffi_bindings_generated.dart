@@ -274,26 +274,39 @@ class PgpFfiBindings {
 
   /// Revoke the cert and write the updated cert to `*revoked_cert`.
   ///
+  /// `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
+  /// 1 = superseded, 2 = compromised, 3 = retired); other values are recorded
+  /// as-is. `message` is an optional human-readable explanation; pass null for
+  /// none.
+  ///
   /// # Safety
-  /// `cert` and `revoked_cert` must be non-null.
+  /// `cert` and `revoked_cert` must be non-null. `message`, if non-null, must
+  /// be a valid NUL-terminated C string.
   int pgp_certificate_revoke(
     ffi.Pointer<Certificate> cert,
+    int reason,
+    ffi.Pointer<ffi.Char> message,
     ffi.Pointer<ffi.Pointer<Certificate>> revoked_cert,
   ) {
     return _pgp_certificate_revoke(
       cert,
+      reason,
+      message,
       revoked_cert,
     );
   }
 
   late final _pgp_certificate_revokePtr = _lookup<
           ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Uint8,
+                  ffi.Pointer<ffi.Char>,
                   ffi.Pointer<ffi.Pointer<Certificate>>)>>(
       'pgp_certificate_revoke');
   late final _pgp_certificate_revoke = _pgp_certificate_revokePtr.asFunction<
-      int Function(
-          ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      int Function(ffi.Pointer<Certificate>, int, ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
   /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
   ///
@@ -345,29 +358,43 @@ class PgpFfiBindings {
 
   /// Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
   ///
+  /// `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
+  /// 1 = superseded, 2 = compromised, 3 = retired); other values are recorded
+  /// as-is. `message` is an optional human-readable explanation; pass null for
+  /// none.
+  ///
   /// # Safety
-  /// `cert` and `new_cert` must be non-null.
+  /// `cert` and `new_cert` must be non-null. `message`, if non-null, must be a
+  /// valid NUL-terminated C string.
   int pgp_certificate_revoke_subkey(
     ffi.Pointer<Certificate> cert,
     int subkey_index,
+    int reason,
+    ffi.Pointer<ffi.Char> message,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
     return _pgp_certificate_revoke_subkey(
       cert,
       subkey_index,
+      reason,
+      message,
       new_cert,
     );
   }
 
   late final _pgp_certificate_revoke_subkeyPtr = _lookup<
           ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Uint32,
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Uint32,
+                  ffi.Uint8,
+                  ffi.Pointer<ffi.Char>,
                   ffi.Pointer<ffi.Pointer<Certificate>>)>>(
       'pgp_certificate_revoke_subkey');
   late final _pgp_certificate_revoke_subkey =
       _pgp_certificate_revoke_subkeyPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+          int Function(ffi.Pointer<Certificate>, int, int,
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
   /// Add `user_id` to the cert, writing the updated cert to `*new_cert`.
   ///
@@ -435,16 +462,25 @@ class PgpFfiBindings {
 
   /// Revoke the exact-match user ID, writing the updated cert to `*new_cert`.
   ///
+  /// `reason` is an RFC 4880 reason-for-revocation code (32 = user ID no
+  /// longer valid, 0 = unspecified); other values are recorded as-is.
+  /// `message` is an optional human-readable explanation; pass null for none.
+  ///
   /// # Safety
-  /// `cert`, `user_id`, and `new_cert` must be non-null.
+  /// `cert`, `user_id`, and `new_cert` must be non-null. `message`, if
+  /// non-null, must be a valid NUL-terminated C string.
   int pgp_certificate_revoke_userid(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> user_id,
+    int reason,
+    ffi.Pointer<ffi.Char> message,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
     return _pgp_certificate_revoke_userid(
       cert,
       user_id,
+      reason,
+      message,
       new_cert,
     );
   }
@@ -454,12 +490,14 @@ class PgpFfiBindings {
               ffi.Int32 Function(
                   ffi.Pointer<Certificate>,
                   ffi.Pointer<ffi.Char>,
+                  ffi.Uint8,
+                  ffi.Pointer<ffi.Char>,
                   ffi.Pointer<ffi.Pointer<Certificate>>)>>(
       'pgp_certificate_revoke_userid');
   late final _pgp_certificate_revoke_userid =
       _pgp_certificate_revoke_useridPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>, int,
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
   /// Return the primary key fingerprint as an uppercase hex string.
   /// Caller must free `*out` with `free()`.
