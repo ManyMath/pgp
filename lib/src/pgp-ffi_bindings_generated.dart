@@ -510,6 +510,33 @@ class PgpFfiBindings {
       int Function(
           ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// Return one line per subkey: `index\tfingerprint\tflags\trevoked`, where
+  /// `flags` is a comma-separated list of capabilities (`encryption`,
+  /// `signing`) and `revoked` is `1` if the subkey is revoked, `0` otherwise.
+  /// `index` matches the zero-based `subkey_index` accepted by
+  /// `pgp_certificate_revoke_subkey`, so callers no longer need to guess it.
+  /// Caller must free `*out` with `free()`.
+  ///
+  /// # Safety
+  /// `cert` and `out` must be non-null.
+  int pgp_certificate_subkeys(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> out,
+  ) {
+    return _pgp_certificate_subkeys(
+      cert,
+      out,
+    );
+  }
+
+  late final _pgp_certificate_subkeysPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('pgp_certificate_subkeys');
+  late final _pgp_certificate_subkeys = _pgp_certificate_subkeysPtr.asFunction<
+      int Function(
+          ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
   /// Write the primary key expiration as seconds since the Unix epoch into `*out`.
   /// Writes 0 if the certificate has no expiry or if the policy check fails.
   ///

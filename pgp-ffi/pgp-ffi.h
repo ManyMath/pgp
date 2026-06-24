@@ -197,6 +197,19 @@ int32_t pgp_certificate_fingerprint(const struct Certificate *cert, char **out);
 int32_t pgp_certificate_userids(const struct Certificate *cert, char **out);
 
 /**
+ * Return one line per subkey: `index\tfingerprint\tflags\trevoked`, where
+ * `flags` is a comma-separated list of capabilities (`encryption`,
+ * `signing`) and `revoked` is `1` if the subkey is revoked, `0` otherwise.
+ * `index` matches the zero-based `subkey_index` accepted by
+ * `pgp_certificate_revoke_subkey`, so callers no longer need to guess it.
+ * Caller must free `*out` with `free()`.
+ *
+ * # Safety
+ * `cert` and `out` must be non-null.
+ */
+int32_t pgp_certificate_subkeys(const struct Certificate *cert, char **out);
+
+/**
  * Write the primary key expiration as seconds since the Unix epoch into `*out`.
  * Writes 0 if the certificate has no expiry or if the policy check fails.
  *
