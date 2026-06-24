@@ -2318,3 +2318,262 @@ pub unsafe extern "C" fn pgp_decrypt_string_symmetric(
     };
     write_c_string(&text, plaintext_out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    unsafe fn generate_cert(user_id: &str) -> *mut Certificate {
+        let c_user_id = CString::new(user_id).unwrap();
+        let mut cert: *mut Certificate = ptr::null_mut();
+        let rc = pgp_key_generate(c_user_id.as_ptr(), &mut cert);
+        assert_eq!(rc, FFIError::Ok as i32);
+        assert!(!cert.is_null());
+        cert
+    }
+
+    // --- null-pointer handling ---
+
+    #[test]
+    fn certificate_free_accepts_null() {
+        unsafe {
+            // Must not crash.
+            pgp_certificate_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn from_armored_rejects_null_armored() {
+        unsafe {
+            let mut cert: *mut Certificate = ptr::null_mut();
+            let rc = pgp_certificate_from_armored(ptr::null(), &mut cert);
+            assert_eq!(rc, FFIError::Null as i32);
+        }
+    }
+
+    #[test]
+    fn from_armored_rejects_null_out_param() {
+        unsafe {
+            let armored = CString::new("garbage").unwrap();
+            let rc = pgp_certificate_from_armored(armored.as_ptr(), ptr::null_mut());
+            assert_eq!(rc, FFIError::Null as i32);
+        }
+    }
+
+    #[test]
+    fn key_generate_rejects_null_user_id() {
+        unsafe {
+            let mut cert: *mut Certificate = ptr::null_mut();
+            let rc = pgp_key_generate(ptr::null(), &mut cert);
+            assert_eq!(rc, FFIError::Null as i32);
+        }
+    }
+
+    #[test]
+    fn key_generate_rejects_null_out_param() {
+        unsafe {
+            let user_id = CString::new("null-out@example.org").unwrap();
+            let rc = pgp_key_generate(user_id.as_ptr(), ptr::null_mut());
+            assert_eq!(rc, FFIError::Null as i32);
+        }
+    }
+
+    #[test]
+    fn export_public_armored_rejects_null_cert() {
+        unsafe {
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            let rc = pgp_certificate_export_public_armored(ptr::null(), &mut out);
+            assert_eq!(rc, FFIError::Null as i32);
+        }
+    }
+
+    #[test]
+    fn fingerprint_rejects_null_out_param() {
+        unsafe {
+            let cert = generate_cert("fingerprint-null-out@example.org");
+            let rc = pgp_certificate_fingerprint(cert, ptr::null_mut());
+            assert_eq!(rc, FFIError::Null as i32);
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn encrypt_string_rejects_null_plaintext() {
+        unsafe {
+            let cert = generate_cert("encrypt-null@example.org");
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            let rc = pgp_certificate_encrypt_string(cert, ptr::null(), &mut out);
+            assert_eq!(rc, FFIError::Null as i32);
+            pgp_certificate_free(cert);
+        }
+    }
+
+    // --- error-code correctness on malformed input ---
+
+    #[test]
+    fn from_armored_rejects_garbage_text() {
+        unsafe {
+            let armored = CString::new("this is not a pgp certificate").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            let rc = pgp_certificate_from_armored(armored.as_ptr(), &mut cert);
+            assert_eq!(rc, FFIError::Invalid as i32);
+            assert!(cert.is_null());
+        }
+    }
+
+    #[test]
+    fn from_armored_rejects_empty_string() {
+        unsafe {
+            let armored = CString::new("").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            let rc = pgp_certificate_from_armored(armored.as_ptr(), &mut cert);
+            assert_eq!(rc, FFIError::Invalid as i32);
+        }
+    }
+
+    #[test]
+    fn from_armored_rejects_truncated_valid_cert() {
+        unsafe {
+            let cert = generate_cert("truncated@example.org");
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+            let rc = pgp_certificate_export_public_armored(cert, &mut armored);
+            assert_eq!(rc, FFIError::Ok as i32);
+            pgp_certificate_free(cert);
+
+            let full = CStr::from_ptr(armored).to_str().unwrap().to_owned();
+            libc::free(armored as *mut libc::c_void);
+
+            let truncated = &full[..full.len() / 2];
+            let truncated_c = CString::new(truncated).unwrap();
+            let mut parsed: *mut Certificate = ptr::null_mut();
+            let rc = pgp_certificate_from_armored(truncated_c.as_ptr(), &mut parsed);
+            assert_eq!(rc, FFIError::Invalid as i32);
+        }
+    }
+
+    #[test]
+    fn key_generate_rejects_non_utf8_user_id() {
+        unsafe {
+            // A lone continuation byte is invalid UTF-8 but a valid, NUL-terminated
+            // C string.
+            let invalid_utf8 = [0x80u8, 0x00];
+            let mut cert: *mut Certificate = ptr::null_mut();
+            let rc = pgp_key_generate(invalid_utf8.as_ptr() as *const libc::c_char, &mut cert);
+            assert_eq!(rc, FFIError::Invalid as i32);
+        }
+    }
+
+    #[test]
+    fn fingerprint_on_zeroed_wrapper_is_invalid() {
+        unsafe {
+            // A `Certificate` whose inner pointer is null (as opposed to the
+            // wrapper pointer itself) should be reported as invalid, not
+            // dereferenced.
+            let wrapper = Box::into_raw(Box::new(Certificate(ptr::null_mut())));
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            let rc = pgp_certificate_fingerprint(wrapper, &mut out);
+            assert_eq!(rc, FFIError::Invalid as i32);
+            assert!(out.is_null());
+            drop(Box::from_raw(wrapper));
+        }
+    }
+
+    // --- opaque Certificate handle lifecycle ---
+
+    #[test]
+    fn generate_export_reparse_free_round_trip() {
+        unsafe {
+            let cert = generate_cert("round-trip@example.org");
+
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_export_public_armored(cert, &mut armored),
+                FFIError::Ok as i32
+            );
+            assert!(!armored.is_null());
+
+            let mut fingerprint_before: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_fingerprint(cert, &mut fingerprint_before),
+                FFIError::Ok as i32
+            );
+
+            let mut reparsed: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_from_armored(armored, &mut reparsed),
+                FFIError::Ok as i32
+            );
+            assert!(!reparsed.is_null());
+
+            let mut fingerprint_after: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_fingerprint(reparsed, &mut fingerprint_after),
+                FFIError::Ok as i32
+            );
+
+            assert_eq!(
+                CStr::from_ptr(fingerprint_before),
+                CStr::from_ptr(fingerprint_after)
+            );
+
+            libc::free(armored as *mut libc::c_void);
+            libc::free(fingerprint_before as *mut libc::c_void);
+            libc::free(fingerprint_after as *mut libc::c_void);
+            pgp_certificate_free(cert);
+            pgp_certificate_free(reparsed);
+        }
+    }
+
+    #[test]
+    fn freeing_one_handle_does_not_affect_independent_handles() {
+        unsafe {
+            let a = generate_cert("independent-a@example.org");
+            let b = generate_cert("independent-b@example.org");
+
+            pgp_certificate_free(a);
+
+            // `b` must remain fully usable after an unrelated handle is freed.
+            let mut fp: *mut libc::c_char = ptr::null_mut();
+            let rc = pgp_certificate_fingerprint(b, &mut fp);
+            assert_eq!(rc, FFIError::Ok as i32);
+            assert!(!fp.is_null());
+
+            libc::free(fp as *mut libc::c_void);
+            pgp_certificate_free(b);
+        }
+    }
+
+    /// Double-freeing a `Certificate` handle is undefined behavior by design
+    /// (the FFI contract puts the burden of "free exactly once" on the
+    /// caller, matching `free()`). We can't assert on UB directly, so this
+    /// runs the double-free in a child process and asserts the process
+    /// aborts instead of silently corrupting memory: documenting the
+    /// contract without risking the test harness itself.
+    #[test]
+    fn double_free_aborts_child_process() {
+        const CHILD_ENV: &str = "PGP_FFI_TEST_DOUBLE_FREE_CHILD";
+
+        if std::env::var_os(CHILD_ENV).is_some() {
+            unsafe {
+                let cert = generate_cert("double-free@example.org");
+                pgp_certificate_free(cert);
+                pgp_certificate_free(cert);
+            }
+            return;
+        }
+
+        let exe = std::env::current_exe().expect("locate current test binary");
+        let output = std::process::Command::new(exe)
+            .args(["--test-threads=1", "double_free_aborts_child_process"])
+            .env(CHILD_ENV, "1")
+            .output()
+            .expect("spawn child test process");
+
+        assert!(
+            !output.status.success(),
+            "expected double-free to abort the child process; it exited with {:?}",
+            output.status
+        );
+    }
+}
