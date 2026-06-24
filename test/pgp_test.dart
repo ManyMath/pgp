@@ -98,6 +98,17 @@ void main() {
     cert.dispose();
   });
 
+  test('revoke accepts a reason and message', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final revoked = cert.revoke(
+      reason: RevocationReason.keyCompromised,
+      message: 'key compromised',
+    );
+    expect(revoked.pointer.address, isNonZero);
+    revoked.dispose();
+    cert.dispose();
+  });
+
   test('addSigningSubkey returns an updated certificate', () {
     final cert = pgp.generateKey('someone@example.org');
     final updated = cert.addSigningSubkey();
@@ -118,6 +129,19 @@ void main() {
     final cert = pgp.generateKey('someone@example.org');
     final updated = cert.revokeSubkey(0);
     expect(updated.pointer.address, isNonZero);
+    updated.dispose();
+    cert.dispose();
+  });
+
+  test('revokeSubkey accepts a reason and message', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final updated = cert.revokeSubkey(
+      0,
+      reason: RevocationReason.keySuperseded,
+      message: 'superseded by new subkey',
+    );
+    expect(updated.pointer.address, isNonZero);
+    expect(updated.subkeys().first.isRevoked, isTrue);
     updated.dispose();
     cert.dispose();
   });
@@ -176,6 +200,20 @@ void main() {
     final cert = pgp.generateKey('someone@example.org');
     final withUser = cert.addUserId('other@example.org');
     final revoked = withUser.revokeUserId('other@example.org');
+    expect(revoked.pointer.address, isNonZero);
+    revoked.dispose();
+    withUser.dispose();
+    cert.dispose();
+  });
+
+  test('revokeUserId accepts a reason and message', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final withUser = cert.addUserId('other@example.org');
+    final revoked = withUser.revokeUserId(
+      'other@example.org',
+      reason: RevocationReason.userIdRetired,
+      message: 'address decommissioned',
+    );
     expect(revoked.pointer.address, isNonZero);
     revoked.dispose();
     withUser.dispose();

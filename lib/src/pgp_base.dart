@@ -9,6 +9,30 @@ import 'pgp-ffi_bindings_generated.dart' as ffi;
 /// The bindings to the native functions in [nativeLibrary].
 final ffi.PgpFfiBindings _bindings = ffi.PgpFfiBindings(nativeLibrary);
 
+/// RFC 4880 reason-for-revocation codes accepted by [Certificate.revoke],
+/// [Certificate.revokeSubkey], and [Certificate.revokeUserId].
+enum RevocationReason {
+  /// No reason given.
+  unspecified(0),
+
+  /// The key has been superseded by a new one.
+  keySuperseded(1),
+
+  /// The key material has been compromised.
+  keyCompromised(2),
+
+  /// The key is retired and no longer used.
+  keyRetired(3),
+
+  /// The user ID is no longer valid (user IDs only).
+  userIdRetired(32);
+
+  const RevocationReason(this.code);
+
+  /// The wire-format RFC 4880 reason code.
+  final int code;
+}
+
 /// A snapshot of certificate metadata returned by [Certificate.info].
 class CertificateInfo {
   /// 40-character uppercase hex fingerprint (v4 key).
@@ -179,8 +203,24 @@ class Certificate {
   }
 
   /// Revokes the certificate, returning the revoked certificate.
-  Certificate revoke() =>
-      _derive((out) => _bindings.pgp_certificate_revoke(_ptr, out));
+  ///
+  /// [reason] and [message] are recorded in the revocation signature so
+  /// other implementations can display why the key was revoked.
+  Certificate revoke({
+    RevocationReason reason = RevocationReason.unspecified,
+    String? message,
+  }) {
+    final messagePointer = message?.toNativeUtf8();
+    try {
+      return _derive((out) => _bindings.pgp_certificate_revoke(
+          _ptr,
+          reason.code,
+          messagePointer?.cast() ?? nullptr,
+          out));
+    } finally {
+      if (messagePointer != null) calloc.free(messagePointer);
+    }
+  }
 
   /// Adds a transport-encryption subkey, returning the updated certificate.
   Certificate addTransportEncryptionSubkey() => _derive((out) =>
@@ -192,8 +232,26 @@ class Certificate {
 
   /// Revokes the subkey at [index] (counting subkeys only), returning the
   /// updated certificate.
-  Certificate revokeSubkey(int index) => _derive(
-      (out) => _bindings.pgp_certificate_revoke_subkey(_ptr, index, out));
+  ///
+  /// [reason] and [message] are recorded in the revocation signature so
+  /// other implementations can display why the subkey was revoked.
+  Certificate revokeSubkey(
+    int index, {
+    RevocationReason reason = RevocationReason.unspecified,
+    String? message,
+  }) {
+    final messagePointer = message?.toNativeUtf8();
+    try {
+      return _derive((out) => _bindings.pgp_certificate_revoke_subkey(
+          _ptr,
+          index,
+          reason.code,
+          messagePointer?.cast() ?? nullptr,
+          out));
+    } finally {
+      if (messagePointer != null) calloc.free(messagePointer);
+    }
+  }
 
   /// Adds [userId] to the certificate, returning the updated certificate.
   Certificate addUserId(String userId) {
@@ -207,13 +265,26 @@ class Certificate {
   }
 
   /// Revokes the exact-match [userId], returning the updated certificate.
-  Certificate revokeUserId(String userId) {
+  ///
+  /// [reason] and [message] are recorded in the revocation signature so
+  /// other implementations can display why the user ID was revoked.
+  Certificate revokeUserId(
+    String userId, {
+    RevocationReason reason = RevocationReason.unspecified,
+    String? message,
+  }) {
     final userIdPointer = userId.toNativeUtf8();
+    final messagePointer = message?.toNativeUtf8();
     try {
       return _derive((out) => _bindings.pgp_certificate_revoke_userid(
-          _ptr, userIdPointer.cast(), out));
+          _ptr,
+          userIdPointer.cast(),
+          reason.code,
+          messagePointer?.cast() ?? nullptr,
+          out));
     } finally {
       calloc.free(userIdPointer);
+      if (messagePointer != null) calloc.free(messagePointer);
     }
   }
 
