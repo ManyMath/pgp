@@ -32,9 +32,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --lib --manifest-path pgp-ffi/Cargo.toml
 
+  asan:
+    name: AddressSanitizer (use-after-free)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -Zsanitizer=address
+      ASAN_OPTIONS: detect_leaks=0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-gnu
+          components: rust-src
+
+      - name: Run the suite under ASan
+        run: |
+          cargo test -Zbuild-std --target x86_64-unknown-linux-gnu \
+            --manifest-path pgp-ffi/Cargo.toml -- --skip use_after_free_detected_under_asan
+
+      - name: Confirm ASan catches the deliberate use-after-free
+        run: |
+          if cargo test -Zbuild-std --target x86_64-unknown-linux-gnu \
+            --manifest-path pgp-ffi/Cargo.toml -- --ignored --exact tests::use_after_free_detected_under_asan
+          then
+            echo "::error::expected the use-after-free test to abort under ASan, but it passed"
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.name }})
-    needs: [check-header, unit-tests]
+    needs: [check-header, unit-tests, asan]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
