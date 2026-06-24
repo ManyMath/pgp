@@ -1335,7 +1335,7 @@ pub unsafe extern "C" fn pgp_certificate_set_expiry(
         for ka in sequoia_cert.keys() {
             for sig in ka.self_signatures() {
                 if let Some(t) = sig.signature_creation_time() {
-                    if newest.map_or(true, |n| t > n) {
+                    if newest.is_none_or(|n| t > n) {
                         newest = Some(t);
                     }
                 }
@@ -1344,7 +1344,7 @@ pub unsafe extern "C" fn pgp_certificate_set_expiry(
         for uida in sequoia_cert.userids() {
             for sig in uida.self_signatures() {
                 if let Some(t) = sig.signature_creation_time() {
-                    if newest.map_or(true, |n| t > n) {
+                    if newest.is_none_or(|n| t > n) {
                         newest = Some(t);
                     }
                 }
@@ -1453,12 +1453,9 @@ impl VerificationHelper for DecryptAndVerifyHelper<'_> {
         let mut found = false;
         for layer in structure {
             if let MessageLayer::SignatureGroup { results } = layer {
-                for result in results {
-                    if let Ok(good) = result {
-                        self.signer_fp = Some(good.ka.fingerprint().to_hex());
-                        found = true;
-                        break;
-                    }
+                if let Some(good) = results.into_iter().flatten().next() {
+                    self.signer_fp = Some(good.ka.fingerprint().to_hex());
+                    found = true;
                 }
             }
         }
@@ -2593,6 +2590,215 @@ mod tests {
 
             let mut fingerprint: *mut libc::c_char = ptr::null_mut();
             let _ = pgp_certificate_fingerprint(cert, &mut fingerprint);
+        }
+    }
+
+    // --- crypto round trips ---
+    //
+    // These exercise the actual cryptographic entry points (as opposed to
+    // ABI/null-pointer handling above). The Dart integration suite
+    // (`test/pgp_test.dart`) already covers these extensively against release
+    // builds, but it never runs under the `asan` CI job's sanitizer
+    // instrumentation. Keeping a representative round trip per operation
+    // family here means memory-safety bugs reachable only through real
+    // encrypt/sign/decrypt/verify code paths: not just the ABI shim get
+    // caught by ASan too.
+
+    unsafe fn to_owned_c_string(ptr: *mut libc::c_char) -> String {
+        let s = CStr::from_ptr(ptr).to_str().unwrap().to_owned();
+        libc::free(ptr as *mut libc::c_void);
+        s
+    }
+
+    #[test]
+    fn encrypt_decrypt_string_round_trip() {
+        unsafe {
+            let cert = generate_cert("crypto-encrypt@example.org");
+            let plaintext = CString::new("hello from a rust test").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_encrypt_string(cert, plaintext.as_ptr(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let cipher_c = CString::new(to_owned_c_string(cipher)).unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_decrypt_string(cert, cipher_c.as_ptr(), &mut recovered),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(recovered), "hello from a rust test");
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn sign_verify_string_round_trip() {
+        unsafe {
+            let cert = generate_cert("crypto-sign@example.org");
+            let plaintext = CString::new("signed rust test payload").unwrap();
+
+            let mut signed: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_string(cert, plaintext.as_ptr(), &mut signed),
+                FFIError::Ok as i32
+            );
+
+            let signed_c = CString::new(to_owned_c_string(signed)).unwrap();
+            let mut verified: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_verify_string(cert, signed_c.as_ptr(), &mut verified),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(verified), "signed rust test payload");
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn sign_detached_verify_detached_round_trip() {
+        unsafe {
+            let cert = generate_cert("crypto-detached@example.org");
+            let plaintext = CString::new("detached rust test payload").unwrap();
+
+            let mut sig: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_detached(cert, plaintext.as_ptr(), &mut sig),
+                FFIError::Ok as i32
+            );
+
+            let sig_c = CString::new(to_owned_c_string(sig)).unwrap();
+            assert_eq!(
+                pgp_certificate_verify_detached(cert, plaintext.as_ptr(), sig_c.as_ptr()),
+                FFIError::Ok as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn encrypt_bytes_decrypt_bytes_round_trip() {
+        unsafe {
+            let cert = generate_cert("crypto-bytes@example.org");
+            let data: [u8; 5] = [0, 1, 255, 254, 42];
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_encrypt_bytes(cert, data.as_ptr(), data.len(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let cipher_c = CString::new(to_owned_c_string(cipher)).unwrap();
+            let mut recovered: *mut u8 = ptr::null_mut();
+            let mut recovered_len: usize = 0;
+            assert_eq!(
+                pgp_certificate_decrypt_bytes(
+                    cert,
+                    cipher_c.as_ptr(),
+                    &mut recovered,
+                    &mut recovered_len
+                ),
+                FFIError::Ok as i32
+            );
+            let recovered_slice = std::slice::from_raw_parts(recovered, recovered_len);
+            assert_eq!(recovered_slice, &data[..]);
+            libc::free(recovered as *mut libc::c_void);
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn sign_cleartext_verify_cleartext_round_trip() {
+        unsafe {
+            let cert = generate_cert("crypto-cleartext@example.org");
+            let plaintext = CString::new("cleartext rust test payload").unwrap();
+
+            let mut signed: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_cleartext(cert, plaintext.as_ptr(), &mut signed),
+                FFIError::Ok as i32
+            );
+
+            let signed_c = CString::new(to_owned_c_string(signed)).unwrap();
+            let mut verified: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_verify_cleartext(cert, signed_c.as_ptr(), &mut verified),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(verified), "cleartext rust test payload");
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn encrypt_symmetric_decrypt_symmetric_round_trip() {
+        unsafe {
+            let plaintext = CString::new("symmetric rust test payload").unwrap();
+            let passphrase = CString::new("correct horse battery staple").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_encrypt_string_symmetric(plaintext.as_ptr(), passphrase.as_ptr(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let cipher_c = CString::new(to_owned_c_string(cipher)).unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_string_symmetric(cipher_c.as_ptr(), passphrase.as_ptr(), &mut recovered),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(recovered), "symmetric rust test payload");
+        }
+    }
+
+    #[test]
+    fn encrypt_and_sign_decrypt_and_verify_round_trip() {
+        unsafe {
+            let alice = generate_cert("crypto-alice@example.org");
+            let bob = generate_cert("crypto-bob@example.org");
+            let plaintext = CString::new("sign+encrypt rust test payload").unwrap();
+
+            let recipients = [bob as *const Certificate];
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_encrypt_and_sign_string(
+                    alice,
+                    recipients.as_ptr(),
+                    recipients.len(),
+                    plaintext.as_ptr(),
+                    &mut cipher
+                ),
+                FFIError::Ok as i32
+            );
+
+            let cipher_c = CString::new(to_owned_c_string(cipher)).unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            let mut signer_fingerprint: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_and_verify_string(
+                    bob,
+                    alice,
+                    cipher_c.as_ptr(),
+                    &mut recovered,
+                    &mut signer_fingerprint
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(
+                to_owned_c_string(recovered),
+                "sign+encrypt rust test payload"
+            );
+            libc::free(signer_fingerprint as *mut libc::c_void);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
         }
     }
 }

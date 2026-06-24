@@ -32,12 +32,35 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --lib --manifest-path pgp-ffi/Cargo.toml
 
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --manifest-path pgp-ffi/Cargo.toml --lib --tests -- -D warnings
+
+  c-smoke-test:
+    name: C smoke test (test.c)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path pgp-ffi/Cargo.toml
+      - name: Compile and run test.c against the freshly built cdylib
+        working-directory: pgp-ffi
+        run: |
+          gcc test.c -I. -L./target/debug -lpgp_ffi -o test_runner
+          LD_LIBRARY_PATH=./target/debug ./test_runner
+
   asan:
-    name: AddressSanitizer (use-after-free)
+    name: AddressSanitizer (use-after-free, leaks)
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: -Zsanitizer=address
-      ASAN_OPTIONS: detect_leaks=0
+      ASAN_OPTIONS: detect_leaks=1
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -61,7 +84,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.name }})
-    needs: [check-header, unit-tests, asan]
+    needs: [check-header, unit-tests, clippy, c-smoke-test, asan]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
