@@ -24,9 +24,17 @@ jobs:
       - name: Fail if cbindgen output drifted from the committed header
         run: git diff --exit-code -- pgp-ffi/pgp-ffi.h
 
+  unit-tests:
+    name: Rust unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib --manifest-path pgp-ffi/Cargo.toml
+
   build:
     name: Build (${{ matrix.name }})
-    needs: check-header
+    needs: [check-header, unit-tests]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
