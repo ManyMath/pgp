@@ -2576,4 +2576,23 @@ mod tests {
             output.status
         );
     }
+
+    /// Reading through a freed `Certificate` handle is undefined behavior,
+    /// but unlike double-free it isn't reliably caught by the stable
+    /// allocator alone: freed memory often isn't overwritten immediately,
+    /// so the read can silently "succeed" and the test would be flaky.
+    /// AddressSanitizer poisons freed allocations and aborts on this read
+    /// deterministically, so this test is `#[ignore]`d for normal runs and
+    /// only exercised by the `asan` CI job (see `pgp-ffi-release.yml`).
+    #[test]
+    #[ignore = "UAF reads aren't reliably caught without ASan; run via the `asan` CI job"]
+    fn use_after_free_detected_under_asan() {
+        unsafe {
+            let cert = generate_cert("uaf@example.org");
+            pgp_certificate_free(cert);
+
+            let mut fingerprint: *mut libc::c_char = ptr::null_mut();
+            let _ = pgp_certificate_fingerprint(cert, &mut fingerprint);
+        }
+    }
 }
