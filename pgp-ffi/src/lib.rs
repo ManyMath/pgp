@@ -14,7 +14,7 @@ use sequoia_openpgp::{
     policy::{Policy, StandardPolicy},
     serialize::stream::{Armorer, Encryptor2, LiteralWriter, Message, Signer},
     serialize::Serialize,
-    types::{KeyFlags, ReasonForRevocation, SymmetricAlgorithm},
+    types::{KeyFlags, ReasonForRevocation, RevocationStatus, SymmetricAlgorithm},
     Fingerprint, KeyHandle, Result,
 };
 use std::ffi::CStr;
@@ -1008,6 +1008,58 @@ pub unsafe extern "C" fn pgp_certificate_userids(
         .map(|ua| String::from_utf8_lossy(ua.userid().value()).into_owned())
         .collect();
     let joined = ids.join("\n");
+    write_c_string(&joined, out)
+}
+
+/// Return one line per subkey: `index\tfingerprint\tflags\trevoked`, where
+/// `flags` is a comma-separated list of capabilities (`encryption`,
+/// `signing`) and `revoked` is `1` if the subkey is revoked, `0` otherwise.
+/// `index` matches the zero-based `subkey_index` accepted by
+/// `pgp_certificate_revoke_subkey`, so callers no longer need to guess it.
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `cert` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_subkeys(
+    cert: *const Certificate,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+    let policy = StandardPolicy::new();
+
+    // Indexed the same way as `pgp_certificate_revoke_subkey`
+    // (`cert.keys().subkeys().nth(subkey_index)`), so listing and revocation
+    // agree on what `index` means.
+    let lines: Vec<String> = sequoia_cert
+        .keys()
+        .subkeys()
+        .enumerate()
+        .map(|(i, ka)| {
+            let fingerprint = ka.key().fingerprint().to_hex();
+            let mut flags = Vec::new();
+            let mut revoked = false;
+            if let Ok(vka) = ka.with_policy(&policy, None) {
+                if vka.for_transport_encryption() {
+                    flags.push("encryption");
+                }
+                if vka.for_signing() {
+                    flags.push("signing");
+                }
+                revoked = matches!(vka.revocation_status(), RevocationStatus::Revoked(_));
+            }
+            format!("{}\t{}\t{}\t{}", i, fingerprint, flags.join(","), revoked as u8)
+        })
+        .collect();
+    let joined = lines.join("\n");
     write_c_string(&joined, out)
 }
 
@@ -2799,6 +2851,96 @@ mod tests {
 
             pgp_certificate_free(alice);
             pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn subkeys_lists_capabilities_and_agrees_with_revoke_subkey_indexing() {
+        unsafe {
+            let cert = generate_cert("subkeys@example.org");
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(cert, &mut listing),
+                FFIError::Ok as i32
+            );
+            assert!(!listing.is_null());
+            let listing_str = to_owned_c_string(listing);
+
+            // `pgp_key_generate` produces a signing subkey and a
+            // transport-encryption subkey.
+            let lines: Vec<&str> = listing_str.lines().collect();
+            assert_eq!(lines.len(), 2);
+            let flags: Vec<&str> = lines
+                .iter()
+                .map(|l| l.split('\t').nth(2).unwrap())
+                .collect();
+            assert!(flags.contains(&"encryption"));
+            assert!(flags.contains(&"signing"));
+            for line in &lines {
+                let fields: Vec<&str> = line.split('\t').collect();
+                assert_eq!(fields[1].len(), 40);
+                assert_eq!(fields[3], "0");
+            }
+
+            // Revoking index 0 (as reported above) must revoke that exact
+            // subkey, and the listing must then report it as revoked.
+            let mut revoked_cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke_subkey(cert, 0, &mut revoked_cert),
+                FFIError::Ok as i32
+            );
+
+            let mut listing_after: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(revoked_cert, &mut listing_after),
+                FFIError::Ok as i32
+            );
+            let listing_after_str = to_owned_c_string(listing_after);
+            let fields_after: Vec<&str> =
+                listing_after_str.lines().next().unwrap().split('\t').collect();
+            assert_eq!(fields_after[3], "1");
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(revoked_cert);
+        }
+    }
+
+    #[test]
+    fn subkeys_reports_signing_subkey_after_add() {
+        unsafe {
+            let cert = generate_cert("add-signing-subkey@example.org");
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_signing_subkey(cert, &mut updated),
+                FFIError::Ok as i32
+            );
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(updated, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+
+            // Base cert already has a signing and an encryption subkey; this
+            // adds a second signing subkey, for three subkeys total.
+            let lines: Vec<&str> = listing_str.lines().collect();
+            assert_eq!(lines.len(), 3);
+            let flags: Vec<&str> = lines
+                .iter()
+                .map(|l| l.split('\t').nth(2).unwrap())
+                .collect();
+            assert_eq!(flags.iter().filter(|f| **f == "signing").count(), 2);
+            assert_eq!(flags.iter().filter(|f| **f == "encryption").count(), 1);
+            for line in &lines {
+                let fields: Vec<&str> = line.split('\t').collect();
+                assert_eq!(fields[3], "0");
+            }
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(updated);
         }
     }
 }
