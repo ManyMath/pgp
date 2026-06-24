@@ -115,12 +115,53 @@ void main() {
   });
 
   test('revokeSubkey revokes the generated subkey', () {
-    // The first generated subkey is transport-encryption capable.
     final cert = pgp.generateKey('someone@example.org');
     final updated = cert.revokeSubkey(0);
     expect(updated.pointer.address, isNonZero);
     updated.dispose();
     cert.dispose();
+  });
+
+  group('subkey inspection', () {
+    test('subkeys lists the encryption and signing subkeys', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final subkeys = cert.subkeys();
+
+      expect(subkeys, hasLength(2));
+      expect(subkeys.map((s) => s.index), [0, 1]);
+      expect(subkeys.every((s) => s.fingerprint.length == 40), isTrue);
+      expect(subkeys.every((s) => !s.isRevoked), isTrue);
+      expect(subkeys.where((s) => s.canEncrypt), hasLength(1));
+      expect(subkeys.where((s) => s.canSign), hasLength(1));
+
+      cert.dispose();
+    });
+
+    test('subkeys agrees with revokeSubkey indexing', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final encryptionSubkey =
+          cert.subkeys().firstWhere((s) => s.canEncrypt);
+
+      final revoked = cert.revokeSubkey(encryptionSubkey.index);
+      final revokedInfo =
+          revoked.subkeys().firstWhere((s) => s.index == encryptionSubkey.index);
+      expect(revokedInfo.isRevoked, isTrue);
+
+      revoked.dispose();
+      cert.dispose();
+    });
+
+    test('subkeys reflects a newly added signing subkey', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final updated = cert.addSigningSubkey();
+
+      final subkeys = updated.subkeys();
+      expect(subkeys, hasLength(3));
+      expect(subkeys.where((s) => s.canSign), hasLength(2));
+
+      updated.dispose();
+      cert.dispose();
+    });
   });
 
   test('addUserId returns an updated certificate', () {

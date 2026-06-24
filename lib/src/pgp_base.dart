@@ -35,6 +35,33 @@ class CertificateInfo {
       : null;
 }
 
+/// A subkey listed by [Certificate.subkeys].
+class SubkeyInfo {
+  /// Zero-based index, matching the `subkeyIndex` accepted by
+  /// [Certificate.revokeSubkey].
+  final int index;
+
+  /// 40-character uppercase hex fingerprint of this subkey.
+  final String fingerprint;
+
+  /// Whether this subkey is usable for transport encryption.
+  final bool canEncrypt;
+
+  /// Whether this subkey is usable for signing.
+  final bool canSign;
+
+  /// Whether this subkey has been revoked.
+  final bool isRevoked;
+
+  const SubkeyInfo({
+    required this.index,
+    required this.fingerprint,
+    required this.canEncrypt,
+    required this.canSign,
+    required this.isRevoked,
+  });
+}
+
 /// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify].
 class SignedPlaintext {
   /// The decrypted plaintext.
@@ -213,6 +240,33 @@ class Certificate {
       final raw = out.value.cast<Utf8>().toDartString();
       calloc.free(out.value);
       return raw.isEmpty ? [] : raw.split('\n');
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Returns metadata for every subkey on this certificate, in the same
+  /// order (and with the same zero-based indexing) expected by
+  /// [revokeSubkey].
+  List<SubkeyInfo> subkeys() {
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_subkeys(_ptr, out);
+      if (code != 0) throw PgpException(code);
+      final raw = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      if (raw.isEmpty) return [];
+      return raw.split('\n').map((line) {
+        final fields = line.split('\t');
+        final flags = fields[2].split(',');
+        return SubkeyInfo(
+          index: int.parse(fields[0]),
+          fingerprint: fields[1],
+          canEncrypt: flags.contains('encryption'),
+          canSign: flags.contains('signing'),
+          isRevoked: fields[3] == '1',
+        );
+      }).toList();
     } finally {
       calloc.free(out);
     }
