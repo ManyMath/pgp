@@ -81,6 +81,7 @@ struct DecryptOnlyHelper<'a> {
 
 struct VerifyHelper<'a> {
     cert: &'a SequoiaCert,
+    signer_fp: Option<String>,
 }
 
 impl VerificationHelper for VerifyHelper<'_> {
@@ -93,7 +94,8 @@ impl VerificationHelper for VerifyHelper<'_> {
         for (index, layer) in structure.into_iter().enumerate() {
             match layer {
                 MessageLayer::SignatureGroup { results } if index == 0 => {
-                    if results.iter().any(|result| result.is_ok()) {
+                    if let Some(good_checksum) = results.into_iter().flatten().next() {
+                        self.signer_fp = Some(good_checksum.ka.fingerprint().to_hex());
                         good = true;
                     } else {
                         return Err(anyhow::anyhow!("No valid signature"));
@@ -550,18 +552,27 @@ pub unsafe extern "C" fn pgp_certificate_sign_string(
 /// verified plaintext to `*plaintext`. Caller must free `*plaintext` with
 /// `free()`.
 ///
+/// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+/// produced the valid signature is written to `*signer_fingerprint` (caller
+/// must free with `free()`). Pass null if the signer identity isn't needed.
+///
 /// # Safety
 /// `cert`, `armored_message`, and `plaintext` must be non-null.
+/// `signer_fingerprint` may be null.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_verify_string(
     cert: *const Certificate,
     armored_message: *const libc::c_char,
     plaintext: *mut *mut libc::c_char,
+    signer_fingerprint: *mut *mut libc::c_char,
 ) -> i32 {
     if cert.is_null() || armored_message.is_null() || plaintext.is_null() {
         return FFIError::Null as i32;
     }
     *plaintext = ptr::null_mut();
+    if !signer_fingerprint.is_null() {
+        *signer_fingerprint = ptr::null_mut();
+    }
 
     let wrapper = &*cert;
     if wrapper.0.is_null() {
@@ -571,7 +582,10 @@ pub unsafe extern "C" fn pgp_certificate_verify_string(
     let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
 
     let policy = &StandardPolicy::new();
-    let helper = VerifyHelper { cert };
+    let helper = VerifyHelper {
+        cert,
+        signer_fp: None,
+    };
     let mut verifier = match VerifierBuilder::from_bytes(armored_bytes) {
         Ok(builder) => match builder.with_policy(policy, None, helper) {
             Ok(verifier) => verifier,
@@ -589,7 +603,17 @@ pub unsafe extern "C" fn pgp_certificate_verify_string(
         Ok(s) => s,
         Err(_) => return FFIError::Invalid as i32,
     };
-    write_c_string(&text, plaintext)
+
+    let r = write_c_string(&text, plaintext);
+    if r != 0 {
+        return r;
+    }
+    if !signer_fingerprint.is_null() {
+        if let Some(fp) = verifier.into_helper().signer_fp {
+            return write_c_string(&fp, signer_fingerprint);
+        }
+    }
+    FFIError::Ok as i32
 }
 
 /// Revoke the cert and write the updated cert to `*revoked_cert`.
@@ -1327,16 +1351,25 @@ pub unsafe extern "C" fn pgp_certificate_sign_detached(
 /// Verify a detached signature `armored_sig` against `plaintext` using the
 /// certificate. Returns 0 if valid, negative on failure.
 ///
+/// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+/// produced the valid signature is written to `*signer_fingerprint` (caller
+/// must free with `free()`). Pass null if the signer identity isn't needed.
+///
 /// # Safety
 /// `cert`, `plaintext`, and `armored_sig` must be non-null.
+/// `signer_fingerprint` may be null.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_verify_detached(
     cert: *const Certificate,
     plaintext: *const libc::c_char,
     armored_sig: *const libc::c_char,
+    signer_fingerprint: *mut *mut libc::c_char,
 ) -> i32 {
     if cert.is_null() || plaintext.is_null() || armored_sig.is_null() {
         return FFIError::Null as i32;
+    }
+    if !signer_fingerprint.is_null() {
+        *signer_fingerprint = ptr::null_mut();
     }
 
     let wrapper = &*cert;
@@ -1348,7 +1381,10 @@ pub unsafe extern "C" fn pgp_certificate_verify_detached(
     let sig_bytes = CStr::from_ptr(armored_sig).to_bytes();
 
     let policy = &StandardPolicy::new();
-    let helper = VerifyHelper { cert };
+    let helper = VerifyHelper {
+        cert,
+        signer_fp: None,
+    };
     let mut verifier = match DetachedVerifierBuilder::from_bytes(sig_bytes) {
         Ok(b) => match b.with_policy(policy, None, helper) {
             Ok(v) => v,
@@ -1357,10 +1393,16 @@ pub unsafe extern "C" fn pgp_certificate_verify_detached(
         Err(_) => return FFIError::Invalid as i32,
     };
 
-    match verifier.verify_bytes(plaintext_bytes) {
-        Ok(_) => FFIError::Ok as i32,
-        Err(_) => FFIError::Failed as i32,
+    if verifier.verify_bytes(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
     }
+
+    if !signer_fingerprint.is_null() {
+        if let Some(fp) = verifier.into_helper().signer_fp {
+            return write_c_string(&fp, signer_fingerprint);
+        }
+    }
+    FFIError::Ok as i32
 }
 
 /// Generate a new certificate carrying `user_id` with an optional validity
@@ -2029,15 +2071,20 @@ pub unsafe extern "C" fn pgp_certificate_sign_bytes(
 /// `*plaintext_out` (length in `*plaintext_len`). Caller must free
 /// `*plaintext_out` with `free()`.
 ///
+/// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+/// produced the valid signature is written to `*signer_fingerprint` (caller
+/// must free with `free()`). Pass null if the signer identity isn't needed.
+///
 /// # Safety
 /// `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
-/// non-null.
+/// non-null. `signer_fingerprint` may be null.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_verify_bytes(
     cert: *const Certificate,
     armored_message: *const libc::c_char,
     plaintext_out: *mut *mut u8,
     plaintext_len: *mut usize,
+    signer_fingerprint: *mut *mut libc::c_char,
 ) -> i32 {
     if cert.is_null()
         || armored_message.is_null()
@@ -2048,6 +2095,9 @@ pub unsafe extern "C" fn pgp_certificate_verify_bytes(
     }
     *plaintext_out = ptr::null_mut();
     *plaintext_len = 0;
+    if !signer_fingerprint.is_null() {
+        *signer_fingerprint = ptr::null_mut();
+    }
 
     let wrapper = &*cert;
     if wrapper.0.is_null() {
@@ -2057,7 +2107,10 @@ pub unsafe extern "C" fn pgp_certificate_verify_bytes(
     let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
 
     let policy = &StandardPolicy::new();
-    let helper = VerifyHelper { cert };
+    let helper = VerifyHelper {
+        cert,
+        signer_fp: None,
+    };
     let mut verifier = match VerifierBuilder::from_bytes(armored_bytes) {
         Ok(builder) => match builder.with_policy(policy, None, helper) {
             Ok(v) => v,
@@ -2071,7 +2124,16 @@ pub unsafe extern "C" fn pgp_certificate_verify_bytes(
         return FFIError::Failed as i32;
     }
 
-    write_bytes_buffer(&out, plaintext_out, plaintext_len)
+    let r = write_bytes_buffer(&out, plaintext_out, plaintext_len);
+    if r != 0 {
+        return r;
+    }
+    if !signer_fingerprint.is_null() {
+        if let Some(fp) = verifier.into_helper().signer_fp {
+            return write_c_string(&fp, signer_fingerprint);
+        }
+    }
+    FFIError::Ok as i32
 }
 
 /// Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
@@ -2238,18 +2300,27 @@ pub unsafe extern "C" fn pgp_certificate_sign_cleartext(
 /// certificate. Writes the plaintext to `*plaintext_out`. Caller must free
 /// `*plaintext_out` with `free()`.
 ///
+/// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+/// produced the valid signature is written to `*signer_fingerprint` (caller
+/// must free with `free()`). Pass null if the signer identity isn't needed.
+///
 /// # Safety
 /// `cert`, `signed_message`, and `plaintext_out` must be non-null.
+/// `signer_fingerprint` may be null.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_verify_cleartext(
     cert: *const Certificate,
     signed_message: *const libc::c_char,
     plaintext_out: *mut *mut libc::c_char,
+    signer_fingerprint: *mut *mut libc::c_char,
 ) -> i32 {
     if cert.is_null() || signed_message.is_null() || plaintext_out.is_null() {
         return FFIError::Null as i32;
     }
     *plaintext_out = ptr::null_mut();
+    if !signer_fingerprint.is_null() {
+        *signer_fingerprint = ptr::null_mut();
+    }
 
     let wrapper = &*cert;
     if wrapper.0.is_null() {
@@ -2259,7 +2330,10 @@ pub unsafe extern "C" fn pgp_certificate_verify_cleartext(
     let msg_bytes = CStr::from_ptr(signed_message).to_bytes();
 
     let policy = &StandardPolicy::new();
-    let helper = VerifyHelper { cert };
+    let helper = VerifyHelper {
+        cert,
+        signer_fp: None,
+    };
     // VerifierBuilder handles cleartext signatures transparently.
     let mut verifier = match VerifierBuilder::from_bytes(msg_bytes) {
         Ok(builder) => match builder.with_policy(policy, None, helper) {
@@ -2278,7 +2352,16 @@ pub unsafe extern "C" fn pgp_certificate_verify_cleartext(
         Ok(s) => s,
         Err(_) => return FFIError::Invalid as i32,
     };
-    write_c_string(&text, plaintext_out)
+    let r = write_c_string(&text, plaintext_out);
+    if r != 0 {
+        return r;
+    }
+    if !signer_fingerprint.is_null() {
+        if let Some(fp) = verifier.into_helper().signer_fp {
+            return write_c_string(&fp, signer_fingerprint);
+        }
+    }
+    FFIError::Ok as i32
 }
 
 // -- Feature 4: Symmetric encryption (passphrase-only)
@@ -2714,6 +2797,22 @@ mod tests {
         s
     }
 
+    unsafe fn signing_subkey_fingerprint(cert: *mut Certificate) -> String {
+        let mut subkeys: *mut libc::c_char = ptr::null_mut();
+        assert_eq!(
+            pgp_certificate_subkeys(cert, &mut subkeys),
+            FFIError::Ok as i32
+        );
+        let raw = to_owned_c_string(subkeys);
+        raw.lines()
+            .find_map(|line| {
+                let fields: Vec<&str> = line.split('\t').collect();
+                let flags = fields[2].split(',').collect::<Vec<_>>();
+                flags.contains(&"signing").then(|| fields[1].to_string())
+            })
+            .expect("cert should have a signing subkey")
+    }
+
     #[test]
     fn encrypt_decrypt_string_round_trip() {
         unsafe {
@@ -2750,13 +2849,21 @@ mod tests {
                 FFIError::Ok as i32
             );
 
+            let expected_fp = signing_subkey_fingerprint(cert);
             let signed_c = CString::new(to_owned_c_string(signed)).unwrap();
             let mut verified: *mut libc::c_char = ptr::null_mut();
+            let mut signer_fp: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_verify_string(cert, signed_c.as_ptr(), &mut verified),
+                pgp_certificate_verify_string(
+                    cert,
+                    signed_c.as_ptr(),
+                    &mut verified,
+                    &mut signer_fp
+                ),
                 FFIError::Ok as i32
             );
             assert_eq!(to_owned_c_string(verified), "signed rust test payload");
+            assert_eq!(to_owned_c_string(signer_fp), expected_fp);
 
             pgp_certificate_free(cert);
         }
@@ -2774,9 +2881,28 @@ mod tests {
                 FFIError::Ok as i32
             );
 
+            let expected_fp = signing_subkey_fingerprint(cert);
             let sig_c = CString::new(to_owned_c_string(sig)).unwrap();
+            let mut signer_fp: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_verify_detached(cert, plaintext.as_ptr(), sig_c.as_ptr()),
+                pgp_certificate_verify_detached(
+                    cert,
+                    plaintext.as_ptr(),
+                    sig_c.as_ptr(),
+                    &mut signer_fp
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(signer_fp), expected_fp);
+
+            // A null out-param is accepted and simply skipped.
+            assert_eq!(
+                pgp_certificate_verify_detached(
+                    cert,
+                    plaintext.as_ptr(),
+                    sig_c.as_ptr(),
+                    ptr::null_mut()
+                ),
                 FFIError::Ok as i32
             );
 
@@ -2817,6 +2943,42 @@ mod tests {
     }
 
     #[test]
+    fn sign_bytes_verify_bytes_round_trip_reports_signer() {
+        unsafe {
+            let cert = generate_cert("crypto-sign-bytes@example.org");
+            let data: [u8; 4] = [9, 8, 7, 6];
+
+            let mut signed: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_bytes(cert, data.as_ptr(), data.len(), &mut signed),
+                FFIError::Ok as i32
+            );
+
+            let expected_fp = signing_subkey_fingerprint(cert);
+            let signed_c = CString::new(to_owned_c_string(signed)).unwrap();
+            let mut recovered: *mut u8 = ptr::null_mut();
+            let mut recovered_len: usize = 0;
+            let mut signer_fp: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_verify_bytes(
+                    cert,
+                    signed_c.as_ptr(),
+                    &mut recovered,
+                    &mut recovered_len,
+                    &mut signer_fp
+                ),
+                FFIError::Ok as i32
+            );
+            let recovered_slice = std::slice::from_raw_parts(recovered, recovered_len);
+            assert_eq!(recovered_slice, &data[..]);
+            assert_eq!(to_owned_c_string(signer_fp), expected_fp);
+            libc::free(recovered as *mut libc::c_void);
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
     fn sign_cleartext_verify_cleartext_round_trip() {
         unsafe {
             let cert = generate_cert("crypto-cleartext@example.org");
@@ -2828,13 +2990,21 @@ mod tests {
                 FFIError::Ok as i32
             );
 
+            let expected_fp = signing_subkey_fingerprint(cert);
             let signed_c = CString::new(to_owned_c_string(signed)).unwrap();
             let mut verified: *mut libc::c_char = ptr::null_mut();
+            let mut signer_fp: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_verify_cleartext(cert, signed_c.as_ptr(), &mut verified),
+                pgp_certificate_verify_cleartext(
+                    cert,
+                    signed_c.as_ptr(),
+                    &mut verified,
+                    &mut signer_fp
+                ),
                 FFIError::Ok as i32
             );
             assert_eq!(to_owned_c_string(verified), "cleartext rust test payload");
+            assert_eq!(to_owned_c_string(signer_fp), expected_fp);
 
             pgp_certificate_free(cert);
         }

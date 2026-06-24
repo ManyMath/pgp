@@ -98,12 +98,18 @@ int32_t pgp_certificate_sign_string(const struct Certificate *cert,
  * verified plaintext to `*plaintext`. Caller must free `*plaintext` with
  * `free()`.
  *
+ * If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+ * produced the valid signature is written to `*signer_fingerprint` (caller
+ * must free with `free()`). Pass null if the signer identity isn't needed.
+ *
  * # Safety
  * `cert`, `armored_message`, and `plaintext` must be non-null.
+ * `signer_fingerprint` may be null.
  */
 int32_t pgp_certificate_verify_string(const struct Certificate *cert,
                                       const char *armored_message,
-                                      char **plaintext);
+                                      char **plaintext,
+                                      char **signer_fingerprint);
 
 /**
  * Revoke the cert and write the updated cert to `*revoked_cert`.
@@ -283,12 +289,18 @@ int32_t pgp_certificate_sign_detached(const struct Certificate *cert,
  * Verify a detached signature `armored_sig` against `plaintext` using the
  * certificate. Returns 0 if valid, negative on failure.
  *
+ * If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+ * produced the valid signature is written to `*signer_fingerprint` (caller
+ * must free with `free()`). Pass null if the signer identity isn't needed.
+ *
  * # Safety
  * `cert`, `plaintext`, and `armored_sig` must be non-null.
+ * `signer_fingerprint` may be null.
  */
 int32_t pgp_certificate_verify_detached(const struct Certificate *cert,
                                         const char *plaintext,
-                                        const char *armored_sig);
+                                        const char *armored_sig,
+                                        char **signer_fingerprint);
 
 /**
  * Generate a new certificate carrying `user_id` with an optional validity
@@ -392,14 +404,19 @@ int32_t pgp_certificate_sign_bytes(const struct Certificate *cert,
  * `*plaintext_out` (length in `*plaintext_len`). Caller must free
  * `*plaintext_out` with `free()`.
  *
+ * If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+ * produced the valid signature is written to `*signer_fingerprint` (caller
+ * must free with `free()`). Pass null if the signer identity isn't needed.
+ *
  * # Safety
  * `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
- * non-null.
+ * non-null. `signer_fingerprint` may be null.
  */
 int32_t pgp_certificate_verify_bytes(const struct Certificate *cert,
                                      const char *armored_message,
                                      uint8_t **plaintext_out,
-                                     uintptr_t *plaintext_len);
+                                     uintptr_t *plaintext_len,
+                                     char **signer_fingerprint);
 
 /**
  * Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
@@ -434,12 +451,18 @@ int32_t pgp_certificate_sign_cleartext(const struct Certificate *cert,
  * certificate. Writes the plaintext to `*plaintext_out`. Caller must free
  * `*plaintext_out` with `free()`.
  *
+ * If `signer_fingerprint` is non-null, the fingerprint of the subkey that
+ * produced the valid signature is written to `*signer_fingerprint` (caller
+ * must free with `free()`). Pass null if the signer identity isn't needed.
+ *
  * # Safety
  * `cert`, `signed_message`, and `plaintext_out` must be non-null.
+ * `signer_fingerprint` may be null.
  */
 int32_t pgp_certificate_verify_cleartext(const struct Certificate *cert,
                                          const char *signed_message,
-                                         char **plaintext_out);
+                                         char **plaintext_out,
+                                         char **signer_fingerprint);
 
 /**
  * Encrypt `plaintext` with `passphrase` (no public key required), writing an
