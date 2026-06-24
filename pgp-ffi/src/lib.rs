@@ -47,6 +47,20 @@ unsafe fn write_c_string(value: &str, out: *mut *mut libc::c_char) -> i32 {
     FFIError::Ok as i32
 }
 
+/// Borrow `message` as UTF-8 bytes for a revocation signature, or `b""` if
+/// `message` is null.
+unsafe fn revocation_message_bytes<'a>(
+    message: *const libc::c_char,
+) -> std::result::Result<&'a [u8], i32> {
+    if message.is_null() {
+        return Ok(b"");
+    }
+    match CStr::from_ptr(message).to_str() {
+        Ok(s) => Ok(s.as_bytes()),
+        Err(_) => Err(FFIError::Invalid as i32),
+    }
+}
+
 unsafe fn write_bytes_buffer(data: &[u8], out: *mut *mut u8, out_len: *mut usize) -> i32 {
     let buf = libc::malloc(data.len().max(1)) as *mut u8;
     if buf.is_null() {
@@ -580,11 +594,19 @@ pub unsafe extern "C" fn pgp_certificate_verify_string(
 
 /// Revoke the cert and write the updated cert to `*revoked_cert`.
 ///
+/// `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
+/// 1 = superseded, 2 = compromised, 3 = retired); other values are recorded
+/// as-is. `message` is an optional human-readable explanation; pass null for
+/// none.
+///
 /// # Safety
-/// `cert` and `revoked_cert` must be non-null.
+/// `cert` and `revoked_cert` must be non-null. `message`, if non-null, must
+/// be a valid NUL-terminated C string.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_revoke(
     cert: *const Certificate,
+    reason: u8,
+    message: *const libc::c_char,
     revoked_cert: *mut *mut Certificate,
 ) -> i32 {
     if cert.is_null() || revoked_cert.is_null() {
@@ -598,6 +620,11 @@ pub unsafe extern "C" fn pgp_certificate_revoke(
     }
     let cert = (&*wrapper.0).clone();
 
+    let message_bytes = match revocation_message_bytes(message) {
+        Ok(b) => b,
+        Err(code) => return code,
+    };
+
     let mut signer = match cert.primary_key().key().clone().parts_into_secret() {
         Ok(k) => match k.into_keypair() {
             Ok(kp) => kp,
@@ -607,7 +634,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke(
     };
 
     let sig = match CertRevocationBuilder::new()
-        .set_reason_for_revocation(ReasonForRevocation::Unspecified, b"Revoked") {
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes) {
         Ok(b) => match b.build(&mut signer, &cert, None) {
             Ok(sig) => sig,
             Err(_) => return FFIError::Failed as i32,
@@ -706,12 +733,20 @@ pub unsafe extern "C" fn pgp_certificate_add_signing_subkey(
 
 /// Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
 ///
+/// `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
+/// 1 = superseded, 2 = compromised, 3 = retired); other values are recorded
+/// as-is. `message` is an optional human-readable explanation; pass null for
+/// none.
+///
 /// # Safety
-/// `cert` and `new_cert` must be non-null.
+/// `cert` and `new_cert` must be non-null. `message`, if non-null, must be a
+/// valid NUL-terminated C string.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_revoke_subkey(
     cert: *const Certificate,
     subkey_index: u32,
+    reason: u8,
+    message: *const libc::c_char,
     new_cert: *mut *mut Certificate,
 ) -> i32 {
     if cert.is_null() || new_cert.is_null() {
@@ -724,6 +759,11 @@ pub unsafe extern "C" fn pgp_certificate_revoke_subkey(
         return FFIError::Invalid as i32;
     }
     let cert = (&*wrapper.0).clone();
+
+    let message_bytes = match revocation_message_bytes(message) {
+        Ok(b) => b,
+        Err(code) => return code,
+    };
 
     let mut signer = match cert.primary_key().key().clone().parts_into_secret() {
         Ok(k) => match k.into_keypair() {
@@ -739,7 +779,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke_subkey(
     };
 
     let sig = match SubkeyRevocationBuilder::new()
-        .set_reason_for_revocation(ReasonForRevocation::KeyRetired, b"Subkey revoked") {
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes) {
         Ok(b) => match b.build(&mut signer, &cert, subkey.key(), None) {
             Ok(sig) => sig,
             Err(_) => return FFIError::Failed as i32,
@@ -903,12 +943,19 @@ pub unsafe extern "C" fn pgp_encrypt_string_to_recipients(
 
 /// Revoke the exact-match user ID, writing the updated cert to `*new_cert`.
 ///
+/// `reason` is an RFC 4880 reason-for-revocation code (32 = user ID no
+/// longer valid, 0 = unspecified); other values are recorded as-is.
+/// `message` is an optional human-readable explanation; pass null for none.
+///
 /// # Safety
-/// `cert`, `user_id`, and `new_cert` must be non-null.
+/// `cert`, `user_id`, and `new_cert` must be non-null. `message`, if
+/// non-null, must be a valid NUL-terminated C string.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_revoke_userid(
     cert: *const Certificate,
     user_id: *const libc::c_char,
+    reason: u8,
+    message: *const libc::c_char,
     new_cert: *mut *mut Certificate,
 ) -> i32 {
     if cert.is_null() || user_id.is_null() || new_cert.is_null() {
@@ -925,6 +972,11 @@ pub unsafe extern "C" fn pgp_certificate_revoke_userid(
     let user_id_str = match CStr::from_ptr(user_id).to_str() {
         Ok(s) => s,
         Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let message_bytes = match revocation_message_bytes(message) {
+        Ok(b) => b,
+        Err(code) => return code,
     };
 
     let target = match cert
@@ -944,7 +996,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke_userid(
     };
 
     let sig = match UserIDRevocationBuilder::new()
-        .set_reason_for_revocation(ReasonForRevocation::UIDRetired, b"User ID revoked") {
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes) {
         Ok(b) => match b.build(&mut signer, &cert, target.userid(), None) {
             Ok(sig) => sig,
             Err(_) => return FFIError::Failed as i32,
@@ -2887,7 +2939,7 @@ mod tests {
             // subkey, and the listing must then report it as revoked.
             let mut revoked_cert: *mut Certificate = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_revoke_subkey(cert, 0, &mut revoked_cert),
+                pgp_certificate_revoke_subkey(cert, 0, 0, ptr::null(), &mut revoked_cert),
                 FFIError::Ok as i32
             );
 
@@ -2941,6 +2993,164 @@ mod tests {
 
             pgp_certificate_free(cert);
             pgp_certificate_free(updated);
+        }
+    }
+
+    // --- revocation reason / message ---
+
+    #[test]
+    fn revoke_records_custom_reason_and_message() {
+        unsafe {
+            let cert = generate_cert("revoke-reason@example.org");
+            let message = CString::new("key compromised on 2026-07-03").unwrap();
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke(
+                    cert,
+                    ReasonForRevocation::KeyCompromised.into(),
+                    message.as_ptr(),
+                    &mut revoked,
+                ),
+                FFIError::Ok as i32
+            );
+
+            let policy = StandardPolicy::new();
+            let sequoia_cert = &*(&*revoked).0;
+            match sequoia_cert.revocation_status(&policy, None) {
+                RevocationStatus::Revoked(sigs) => {
+                    let (code, reason) = sigs[0].reason_for_revocation().unwrap();
+                    assert_eq!(code, ReasonForRevocation::KeyCompromised);
+                    assert_eq!(reason, b"key compromised on 2026-07-03");
+                }
+                other => panic!("expected Revoked, got {other:?}"),
+            }
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn revoke_defaults_to_empty_message_when_null() {
+        unsafe {
+            let cert = generate_cert("revoke-null-message@example.org");
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke(cert, 0, ptr::null(), &mut revoked),
+                FFIError::Ok as i32
+            );
+
+            let policy = StandardPolicy::new();
+            let sequoia_cert = &*(&*revoked).0;
+            match sequoia_cert.revocation_status(&policy, None) {
+                RevocationStatus::Revoked(sigs) => {
+                    let (code, reason) = sigs[0].reason_for_revocation().unwrap();
+                    assert_eq!(code, ReasonForRevocation::Unspecified);
+                    assert_eq!(reason, b"");
+                }
+                other => panic!("expected Revoked, got {other:?}"),
+            }
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn revoke_rejects_non_utf8_message() {
+        unsafe {
+            let cert = generate_cert("revoke-bad-message@example.org");
+            let bad_message: &[u8] = b"\xff\xfe\x00";
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke(
+                    cert,
+                    0,
+                    bad_message.as_ptr() as *const libc::c_char,
+                    &mut revoked,
+                ),
+                FFIError::Invalid as i32
+            );
+            assert!(revoked.is_null());
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn revoke_subkey_records_custom_reason_and_message() {
+        unsafe {
+            let cert = generate_cert("revoke-subkey-reason@example.org");
+            let message = CString::new("superseded by new subkey").unwrap();
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke_subkey(
+                    cert,
+                    0,
+                    ReasonForRevocation::KeySuperseded.into(),
+                    message.as_ptr(),
+                    &mut revoked,
+                ),
+                FFIError::Ok as i32
+            );
+
+            let policy = StandardPolicy::new();
+            let sequoia_cert = &*(&*revoked).0;
+            let subkey = sequoia_cert.keys().subkeys().next().unwrap();
+            match subkey.with_policy(&policy, None).unwrap().revocation_status() {
+                RevocationStatus::Revoked(sigs) => {
+                    let (code, reason) = sigs[0].reason_for_revocation().unwrap();
+                    assert_eq!(code, ReasonForRevocation::KeySuperseded);
+                    assert_eq!(reason, b"superseded by new subkey");
+                }
+                other => panic!("expected Revoked, got {other:?}"),
+            }
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn revoke_userid_records_custom_reason_and_message() {
+        unsafe {
+            let cert = generate_cert("revoke-userid-reason@example.org");
+            let user_id = CString::new("revoke-userid-reason@example.org").unwrap();
+            let message = CString::new("address decommissioned").unwrap();
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke_userid(
+                    cert,
+                    user_id.as_ptr(),
+                    ReasonForRevocation::UIDRetired.into(),
+                    message.as_ptr(),
+                    &mut revoked,
+                ),
+                FFIError::Ok as i32
+            );
+
+            let policy = StandardPolicy::new();
+            let sequoia_cert = &*(&*revoked).0;
+            let ua = sequoia_cert
+                .userids()
+                .find(|ua| ua.userid().value() == b"revoke-userid-reason@example.org")
+                .unwrap();
+            match ua.with_policy(&policy, None).unwrap().revocation_status() {
+                RevocationStatus::Revoked(sigs) => {
+                    let (code, reason) = sigs[0].reason_for_revocation().unwrap();
+                    assert_eq!(code, ReasonForRevocation::UIDRetired);
+                    assert_eq!(reason, b"address decommissioned");
+                }
+                other => panic!("expected Revoked, got {other:?}"),
+            }
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(revoked);
         }
     }
 }

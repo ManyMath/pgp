@@ -36,7 +36,8 @@ int main(void) {
   cert = updated;
 
   updated = NULL;
-  rc = pgp_certificate_revoke_userid(cert, "other@example.org", &updated);
+  rc = pgp_certificate_revoke_userid(cert, "other@example.org", 32,
+                                      "address decommissioned", &updated);
   if (rc != 0 || updated == NULL) {
     fprintf(stderr, "pgp_certificate_revoke_userid failed: rc=%" PRId32 "\n",
             rc);
@@ -47,7 +48,7 @@ int main(void) {
   cert = updated;
 
   updated = NULL;
-  rc = pgp_certificate_revoke_subkey(cert, 1, &updated);
+  rc = pgp_certificate_revoke_subkey(cert, 1, 3, "no longer used", &updated);
   if (rc != 0 || updated == NULL) {
     fprintf(stderr, "pgp_certificate_revoke_subkey failed: rc=%" PRId32 "\n",
             rc);
@@ -58,7 +59,7 @@ int main(void) {
   cert = updated;
 
   updated = NULL;
-  rc = pgp_certificate_revoke(cert, &updated);
+  rc = pgp_certificate_revoke(cert, 2, "key compromised", &updated);
   if (rc != 0 || updated == NULL) {
     fprintf(stderr, "pgp_certificate_revoke failed: rc=%" PRId32 "\n", rc);
     pgp_certificate_free(cert);
