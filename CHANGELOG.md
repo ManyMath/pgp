@@ -1,3 +1,10 @@
+## Unreleased
+
+- Add subkey inspection: `Certificate.subkeys` returns a `SubkeyInfo` per
+  subkey (fingerprint, capabilities, revocation status) using the same
+  zero-based indexing as `revokeSubkey`, so callers no longer have to guess
+  subkey indices.
+
 ## 0.0.1-dev.7
 
 - Add `PGP.encryptToRecipients` for multi-recipient encryption.
