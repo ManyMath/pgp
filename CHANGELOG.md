@@ -1,4 +1,4 @@
-## Unreleased
+## 0.0.1-dev.9
 
 - Upgraded dev-only tooling dependencies: `ffigen` from 14.x to 20.1.1 and
   `lints` from 4.x to 6.1.0. Neither is a runtime dependency: the
