@@ -86,15 +86,31 @@ class SubkeyInfo {
   });
 }
 
-/// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify].
+/// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify],
+/// [Certificate.verifyWithSigner], and [Certificate.verifyCleartextWithSigner].
 class SignedPlaintext {
-  /// The decrypted plaintext.
+  /// The verified (and, for [Certificate.decryptAndVerify], decrypted) plaintext.
   final String plaintext;
 
   /// 40-character uppercase hex fingerprint of the signing subkey.
   final String signerFingerprint;
 
   const SignedPlaintext({
+    required this.plaintext,
+    required this.signerFingerprint,
+  });
+}
+
+/// Raw verified bytes and signer fingerprint returned by
+/// [Certificate.verifyBytesWithSigner].
+class VerifiedBytes {
+  /// The verified plaintext bytes.
+  final Uint8List plaintext;
+
+  /// 40-character uppercase hex fingerprint of the signing subkey.
+  final String signerFingerprint;
+
+  const VerifiedBytes({
     required this.plaintext,
     required this.signerFingerprint,
   });
@@ -160,10 +176,35 @@ class Certificate {
   /// Verifies an armored signed [message] with this certificate.
   ///
   /// Returns the message plaintext if the signature is valid.
-  String verify(String message) => _transformString(
-        message,
-        _bindings.pgp_certificate_verify_string,
+  String verify(String message) => verifyWithSigner(message).plaintext;
+
+  /// Verifies an armored signed [message] with this certificate.
+  ///
+  /// Returns the plaintext together with the fingerprint of the subkey that
+  /// produced the signature. Throws [PgpException] if verification fails.
+  SignedPlaintext verifyWithSigner(String message) {
+    final msgPtr = message.toNativeUtf8();
+    final plaintextOut = calloc<Pointer<Char>>();
+    final fpOut = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_verify_string(
+        _ptr,
+        msgPtr.cast(),
+        plaintextOut,
+        fpOut,
       );
+      if (code != 0) throw PgpException(code);
+      final pt = plaintextOut.value.cast<Utf8>().toDartString();
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      calloc.free(plaintextOut.value);
+      calloc.free(fpOut.value);
+      return SignedPlaintext(plaintext: pt, signerFingerprint: fp);
+    } finally {
+      calloc.free(msgPtr);
+      calloc.free(plaintextOut);
+      calloc.free(fpOut);
+    }
+  }
 
   String _exportArmored(
     int Function(Pointer<ffi.Certificate>, Pointer<Pointer<Char>>) call,
@@ -376,31 +417,39 @@ class Certificate {
   /// Returns true if the signature is valid. Throws [PgpException] if
   /// verification fails or the signature is malformed.
   bool verifyDetached(String plaintext, String armoredSig) {
-    _verifyDetachedStrings(
-      plaintext,
-      armoredSig,
-      _bindings.pgp_certificate_verify_detached,
-    );
-    return true;
-  }
-
-  void _verifyDetachedStrings(
-    String input1,
-    String input2,
-    int Function(
-      Pointer<ffi.Certificate>,
-      Pointer<Char>,
-      Pointer<Char>,
-    ) call,
-  ) {
-    final p1 = input1.toNativeUtf8();
-    final p2 = input2.toNativeUtf8();
+    final p1 = plaintext.toNativeUtf8();
+    final p2 = armoredSig.toNativeUtf8();
     try {
-      final code = call(_ptr, p1.cast(), p2.cast());
+      final code = _bindings.pgp_certificate_verify_detached(
+          _ptr, p1.cast(), p2.cast(), nullptr);
       if (code != 0) throw PgpException(code);
+      return true;
     } finally {
       calloc.free(p1);
       calloc.free(p2);
+    }
+  }
+
+  /// Verifies [armoredSig] against [plaintext] using this certificate.
+  ///
+  /// Returns the fingerprint of the subkey that produced the signature.
+  /// Throws [PgpException] if verification fails or the signature is
+  /// malformed.
+  String verifyDetachedSigner(String plaintext, String armoredSig) {
+    final p1 = plaintext.toNativeUtf8();
+    final p2 = armoredSig.toNativeUtf8();
+    final fpOut = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_verify_detached(
+          _ptr, p1.cast(), p2.cast(), fpOut);
+      if (code != 0) throw PgpException(code);
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      calloc.free(fpOut.value);
+      return fp;
+    } finally {
+      calloc.free(p1);
+      calloc.free(p2);
+      calloc.free(fpOut);
     }
   }
 
@@ -501,7 +550,7 @@ class Certificate {
     final outLen = calloc<UintPtr>();
     try {
       final code = _bindings.pgp_certificate_verify_bytes(
-          _ptr, msgPtr.cast(), outPtr, outLen);
+          _ptr, msgPtr.cast(), outPtr, outLen, nullptr);
       if (code != 0) throw PgpException(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
@@ -511,6 +560,31 @@ class Certificate {
       calloc.free(msgPtr);
       calloc.free(outPtr);
       calloc.free(outLen);
+    }
+  }
+
+  /// Verifies an armored signed [message] with this certificate, returning
+  /// the raw verified bytes together with the signing subkey's fingerprint.
+  VerifiedBytes verifyBytesWithSigner(String message) {
+    final msgPtr = message.toNativeUtf8();
+    final outPtr = calloc<Pointer<Uint8>>();
+    final outLen = calloc<UintPtr>();
+    final fpOut = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_verify_bytes(
+          _ptr, msgPtr.cast(), outPtr, outLen, fpOut);
+      if (code != 0) throw PgpException(code);
+      final len = outLen.value;
+      final result = Uint8List.fromList(outPtr.value.asTypedList(len));
+      calloc.free(outPtr.value);
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      calloc.free(fpOut.value);
+      return VerifiedBytes(plaintext: result, signerFingerprint: fp);
+    } finally {
+      calloc.free(msgPtr);
+      calloc.free(outPtr);
+      calloc.free(outLen);
+      calloc.free(fpOut);
     }
   }
 
@@ -524,10 +598,37 @@ class Certificate {
 
   /// Verifies a cleartext-signed [message] (BEGIN PGP SIGNED MESSAGE) using
   /// this certificate. Returns the plaintext if the signature is valid.
-  String verifyCleartext(String message) => _transformString(
-        message,
-        _bindings.pgp_certificate_verify_cleartext,
+  String verifyCleartext(String message) =>
+      verifyCleartextWithSigner(message).plaintext;
+
+  /// Verifies a cleartext-signed [message] (BEGIN PGP SIGNED MESSAGE) using
+  /// this certificate.
+  ///
+  /// Returns the plaintext together with the fingerprint of the subkey that
+  /// produced the signature. Throws [PgpException] if verification fails.
+  SignedPlaintext verifyCleartextWithSigner(String message) {
+    final msgPtr = message.toNativeUtf8();
+    final plaintextOut = calloc<Pointer<Char>>();
+    final fpOut = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_verify_cleartext(
+        _ptr,
+        msgPtr.cast(),
+        plaintextOut,
+        fpOut,
       );
+      if (code != 0) throw PgpException(code);
+      final pt = plaintextOut.value.cast<Utf8>().toDartString();
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      calloc.free(plaintextOut.value);
+      calloc.free(fpOut.value);
+      return SignedPlaintext(plaintext: pt, signerFingerprint: fp);
+    } finally {
+      calloc.free(msgPtr);
+      calloc.free(plaintextOut);
+      calloc.free(fpOut);
+    }
+  }
 
   /// Decrypts and verifies a signed+encrypted [message] produced by
   /// [PGP.encryptAndSign]. [verifyCert] is the signer's public certificate.

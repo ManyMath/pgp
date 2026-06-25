@@ -90,6 +90,21 @@ void main() {
     cert.dispose();
   });
 
+  test('verifyWithSigner reports the signing subkey fingerprint', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final publicCert = pgp.certificateFromArmored(cert.exportPublicArmored());
+    final signingSubkey = cert.subkeys().firstWhere((s) => s.canSign);
+
+    final signed = cert.sign('hello signed OpenPGP');
+    final result = publicCert.verifyWithSigner(signed);
+
+    expect(result.plaintext, 'hello signed OpenPGP');
+    expect(result.signerFingerprint, signingSubkey.fingerprint);
+
+    publicCert.dispose();
+    cert.dispose();
+  });
+
   test('revoke returns a revoked certificate', () {
     final cert = pgp.generateKey('someone@example.org');
     final revoked = cert.revoke();
@@ -321,6 +336,19 @@ void main() {
         () => cert.verifyDetached('tampered content', sig),
         throwsA(isA<PgpException>()),
       );
+      cert.dispose();
+    });
+
+    test('verifyDetachedSigner reports the signing subkey fingerprint', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final pub = pgp.certificateFromArmored(cert.exportPublicArmored());
+      final signingSubkey = cert.subkeys().firstWhere((s) => s.canSign);
+      const plain = 'hello detached OpenPGP';
+      final sig = cert.signDetached(plain);
+
+      expect(pub.verifyDetachedSigner(plain, sig), signingSubkey.fingerprint);
+
+      pub.dispose();
       cert.dispose();
     });
   });
@@ -562,6 +590,22 @@ void main() {
       cert.dispose();
     });
 
+    test('verifyBytesWithSigner reports the signing subkey fingerprint', () {
+      final cert = pgp.generateKey('bsign-signer@example.org');
+      final pub = pgp.certificateFromArmored(cert.exportPublicArmored());
+      final signingSubkey = cert.subkeys().firstWhere((s) => s.canSign);
+
+      final data = Uint8List.fromList([0xDE, 0xAD, 0xBE, 0xEF]);
+      final signed = cert.signBytes(data);
+      final result = pub.verifyBytesWithSigner(signed);
+
+      expect(result.plaintext, data);
+      expect(result.signerFingerprint, signingSubkey.fingerprint);
+
+      pub.dispose();
+      cert.dispose();
+    });
+
     test('verifyBytes rejects a wrong certificate', () {
       final cert = pgp.generateKey('btamper@example.org');
       final other = pgp.generateKey('btamper2@example.org');
@@ -620,6 +664,23 @@ void main() {
       const plain = 'hello cleartext round-trip';
       final signed = cert.signCleartext(plain);
       expect(pub.verifyCleartext(signed), plain);
+      pub.dispose();
+      cert.dispose();
+    });
+
+    test('verifyCleartextWithSigner reports the signing subkey fingerprint',
+        () {
+      final cert = pgp.generateKey('cleartext-signer@example.org');
+      final pub = pgp.certificateFromArmored(cert.exportPublicArmored());
+      final signingSubkey = cert.subkeys().firstWhere((s) => s.canSign);
+      const plain = 'hello cleartext round-trip';
+      final signed = cert.signCleartext(plain);
+
+      final result = pub.verifyCleartextWithSigner(signed);
+
+      expect(result.plaintext, plain);
+      expect(result.signerFingerprint, signingSubkey.fingerprint);
+
       pub.dispose();
       cert.dispose();
     });
