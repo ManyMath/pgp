@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Add `Certificate.addAuthenticationSubkey()`, mirroring
+  `addSigningSubkey`/`addTransportEncryptionSubkey` for the third standard
+  OpenPGP key-flag role (e.g. PGP-based SSH authentication). `subkeys()` and
+  `SubkeyInfo` gain a `canAuthenticate` flag alongside `canEncrypt`/`canSign`.
 - Add `Certificate.userIdsInfo()`, returning a `UserIdInfo` per user ID
   (revocation status, primary-user-ID flag, binding-signature expiry) using
   the same coverage as `userIds()`: closing the gap where `subkeys()` had
