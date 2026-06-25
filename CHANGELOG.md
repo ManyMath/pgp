@@ -1,5 +1,10 @@
 ## Unreleased
 
+- `Certificate.verify`, `verifyDetached`, `verifyBytes`, and `verifyCleartext`
+  gain `...WithSigner`/`verifyDetachedSigner` counterparts that also return
+  the fingerprint of the subkey that produced the signature (`verifyBytes`'s
+  variant returns a new `VerifiedBytes`), closing a gap where only the
+  sign+encrypt path (`decryptAndVerify`) exposed signer identity.
 - Add subkey inspection: `Certificate.subkeys` returns a `SubkeyInfo` per
   subkey (fingerprint, capabilities, revocation status) using the same
   zero-based indexing as `revokeSubkey`, so callers no longer have to guess
