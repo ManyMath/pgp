@@ -437,6 +437,44 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
+  /// Have `signing_cert` certify `user_id` on `target_cert` (a third-party
+  /// certification, e.g. "Alice vouches that this user ID belongs to Bob"),
+  /// writing the updated copy of `target_cert`: now carrying `signing_cert`'s
+  /// certification signature on that user ID: to `*new_cert`. `target_cert`
+  /// itself is left unmodified; `signing_cert`'s certification-capable secret
+  /// key material must be present and unencrypted. Returns NotFound if
+  /// `user_id` is not present on `target_cert`.
+  /// Caller must free `*new_cert` with `pgp_certificate_free`.
+  ///
+  /// # Safety
+  /// `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be non-null.
+  int pgp_certificate_certify_userid(
+    ffi.Pointer<Certificate> signing_cert,
+    ffi.Pointer<Certificate> target_cert,
+    ffi.Pointer<ffi.Char> user_id,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_certify_userid(
+      signing_cert,
+      target_cert,
+      user_id,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_certify_useridPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_certify_userid');
+  late final _pgp_certificate_certify_userid =
+      _pgp_certificate_certify_useridPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
   /// Encrypt `plaintext` to all `count` recipient certificates and write a single
   /// ASCII-armored message to `*armored_message`. Any recipient whose private key
   /// is available can decrypt. Returns NotFound if `count` is zero or no cert
