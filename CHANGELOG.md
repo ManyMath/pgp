@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Add `Certificate.lock(passphrase)`, the counterpart to `Certificate.unlock`:
+  encrypts all currently-unencrypted secret key material with `passphrase`.
+  Keys that are already passphrase-protected are left untouched; call
+  `unlock` first to rotate an existing passphrase.
 - Add `Certificate.revokeUserIdCertification(target, userId, {reason,
   message})`, the counterpart to `certifyUserId`: retracts this
   certificate's earlier third-party certification of `userId` on `target` by
