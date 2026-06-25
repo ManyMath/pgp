@@ -723,6 +723,127 @@ pub unsafe extern "C" fn pgp_certificate_revocation_info(
     write_c_string(&message, out_message)
 }
 
+/// Build a standalone, ASCII-armored revocation certificate for `cert`
+/// *without* applying it: the `gpg --gen-revoke` workflow: generate this
+/// once (e.g. right after key creation) and store it offline, so the
+/// certificate can still be revoked later even if the secret key or its
+/// passphrase is subsequently lost. Apply it later with
+/// `pgp_certificate_apply_revocation_armored`. Uses the same reason code
+/// and message conventions as `pgp_certificate_revoke`.
+/// Caller must free `*armored` with `free()`.
+///
+/// # Safety
+/// `cert` and `armored` must be non-null. `message`, if non-null, must be a
+/// valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_generate_revocation_armored(
+    cert: *const Certificate,
+    reason: u8,
+    message: *const libc::c_char,
+    armored: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || armored.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+
+    let message_bytes = match revocation_message_bytes(message) {
+        Ok(b) => b,
+        Err(code) => return code,
+    };
+
+    let mut signer = match sequoia_cert.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig = match CertRevocationBuilder::new()
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes)
+    {
+        Ok(b) => match b.build(&mut signer, sequoia_cert, None) {
+            Ok(sig) => sig,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut out = Vec::new();
+    let msg = Message::new(&mut out);
+    let mut armorer = match Armorer::new(msg).kind(armor::Kind::Signature).build() {
+        Ok(a) => a,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    if sequoia_openpgp::serialize::Marshal::serialize(&sig, &mut armorer).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if armorer.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored_string = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored_string, armored)
+}
+
+/// Apply a standalone revocation certificate (produced by
+/// `pgp_certificate_generate_revocation_armored`, or any other RFC 4880
+/// certificate-revocation signature in ASCII armor) to `cert`, writing the
+/// now-revoked certificate to `*new_cert`. `cert` itself is left unmodified.
+/// Unlike `pgp_certificate_revoke`, this needs no secret key material at
+/// all: the signature was already produced when the revocation
+/// certificate was generated.
+///
+/// # Safety
+/// `cert`, `revocation_armored`, and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_apply_revocation_armored(
+    cert: *const Certificate,
+    revocation_armored: *const libc::c_char,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || revocation_armored.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+
+    let armored_str = match CStr::from_ptr(revocation_armored).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let dearmored = armor::Reader::from_reader(Cursor::new(armored_str), None);
+    let sig = match sequoia_openpgp::packet::Signature::from_reader(dearmored) {
+        Ok(sig) => sig,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let updated = match sequoia_cert.insert_packets(sig) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
 ///
 /// # Safety
@@ -4255,6 +4376,138 @@ mod tests {
             );
             assert_eq!(
                 pgp_certificate_revocation_info(cert, &mut revoked, &mut reason, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn generate_revocation_armored_produces_applicable_signature() {
+        unsafe {
+            let cert = generate_cert("standalone-revocation@example.org");
+            let message = CString::new("lost the secret key").unwrap();
+
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored(
+                    cert,
+                    ReasonForRevocation::KeyCompromised.into(),
+                    message.as_ptr(),
+                    &mut armored,
+                ),
+                FFIError::Ok as i32
+            );
+            let armored_str = to_owned_c_string(armored);
+            assert!(armored_str.contains("BEGIN PGP SIGNATURE"));
+
+            // The source cert must be untouched by generating the certificate.
+            let mut revoked_before: u8 = 1;
+            let mut reason: u8 = 0;
+            let mut msg: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revocation_info(cert, &mut revoked_before, &mut reason, &mut msg),
+                FFIError::Ok as i32
+            );
+            assert_eq!(revoked_before, 0);
+            libc::free(msg as *mut libc::c_void);
+
+            let revocation_armored = CString::new(armored_str).unwrap();
+            let mut new_cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_apply_revocation_armored(
+                    cert,
+                    revocation_armored.as_ptr(),
+                    &mut new_cert,
+                ),
+                FFIError::Ok as i32
+            );
+            assert!(!new_cert.is_null());
+
+            let mut revoked: u8 = 0;
+            let mut reason: u8 = 0;
+            let mut message_out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revocation_info(
+                    new_cert,
+                    &mut revoked,
+                    &mut reason,
+                    &mut message_out
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(revoked, 1);
+            assert_eq!(reason, u8::from(ReasonForRevocation::KeyCompromised));
+            assert_eq!(to_owned_c_string(message_out), "lost the secret key");
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(new_cert);
+        }
+    }
+
+    #[test]
+    fn apply_revocation_armored_rejects_garbage_input() {
+        unsafe {
+            let cert = generate_cert("apply-revocation-garbage@example.org");
+            let garbage = CString::new("not a signature").unwrap();
+
+            let mut new_cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_apply_revocation_armored(cert, garbage.as_ptr(), &mut new_cert),
+                FFIError::Invalid as i32
+            );
+            assert!(new_cert.is_null());
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn generate_revocation_armored_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("generate-revocation-null@example.org");
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored(
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    &mut armored,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored(cert, 0, ptr::null(), ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn apply_revocation_armored_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("apply-revocation-null@example.org");
+            let sig = CString::new("placeholder").unwrap();
+            let mut new_cert: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_apply_revocation_armored(
+                    ptr::null(),
+                    sig.as_ptr(),
+                    &mut new_cert,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_apply_revocation_armored(cert, ptr::null(), &mut new_cert),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_apply_revocation_armored(cert, sig.as_ptr(), ptr::null_mut()),
                 FFIError::Null as i32
             );
 

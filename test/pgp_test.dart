@@ -147,6 +147,38 @@ void main() {
     cert.dispose();
   });
 
+  test(
+      'generateRevocationArmored produces a certificate applicable via '
+      'applyRevocationArmored', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final armoredRevocation = cert.generateRevocationArmored(
+      reason: RevocationReason.keyCompromised,
+      message: 'lost the secret key',
+    );
+    expect(armoredRevocation, contains('BEGIN PGP SIGNATURE'));
+
+    // Generating the certificate must not revoke the source certificate.
+    expect(cert.revocationInfo().isRevoked, isFalse);
+
+    final revoked = cert.applyRevocationArmored(armoredRevocation);
+    final info = revoked.revocationInfo();
+    expect(info.isRevoked, isTrue);
+    expect(info.reasonCode, RevocationReason.keyCompromised.code);
+    expect(info.message, 'lost the secret key');
+
+    revoked.dispose();
+    cert.dispose();
+  });
+
+  test('applyRevocationArmored throws for garbage input', () {
+    final cert = pgp.generateKey('someone@example.org');
+    expect(
+      () => cert.applyRevocationArmored('not a signature'),
+      throwsA(isA<PgpException>()),
+    );
+    cert.dispose();
+  });
+
   test('addSigningSubkey returns an updated certificate', () {
     final cert = pgp.generateKey('someone@example.org');
     final updated = cert.addSigningSubkey();

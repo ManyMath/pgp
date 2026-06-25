@@ -363,6 +363,76 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Uint8>,
               ffi.Pointer<ffi.Uint8>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// Build a standalone, ASCII-armored revocation certificate for `cert`
+  /// *without* applying it: the `gpg --gen-revoke` workflow: generate this
+  /// once (e.g. right after key creation) and store it offline, so the
+  /// certificate can still be revoked later even if the secret key or its
+  /// passphrase is subsequently lost. Apply it later with
+  /// `pgp_certificate_apply_revocation_armored`. Uses the same reason code
+  /// and message conventions as `pgp_certificate_revoke`.
+  /// Caller must free `*armored` with `free()`.
+  ///
+  /// # Safety
+  /// `cert` and `armored` must be non-null. `message`, if non-null, must be a
+  /// valid NUL-terminated C string.
+  int pgp_certificate_generate_revocation_armored(
+    ffi.Pointer<Certificate> cert,
+    int reason,
+    ffi.Pointer<ffi.Char> message,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> armored,
+  ) {
+    return _pgp_certificate_generate_revocation_armored(
+      cert,
+      reason,
+      message,
+      armored,
+    );
+  }
+
+  late final _pgp_certificate_generate_revocation_armoredPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Uint8,
+                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_generate_revocation_armored');
+  late final _pgp_certificate_generate_revocation_armored =
+      _pgp_certificate_generate_revocation_armoredPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, int, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
+  /// Apply a standalone revocation certificate (produced by
+  /// `pgp_certificate_generate_revocation_armored`, or any other RFC 4880
+  /// certificate-revocation signature in ASCII armor) to `cert`, writing the
+  /// now-revoked certificate to `*new_cert`. `cert` itself is left unmodified.
+  /// Unlike `pgp_certificate_revoke`, this needs no secret key material at
+  /// all: the signature was already produced when the revocation
+  /// certificate was generated.
+  ///
+  /// # Safety
+  /// `cert`, `revocation_armored`, and `new_cert` must be non-null.
+  int pgp_certificate_apply_revocation_armored(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Char> revocation_armored,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_apply_revocation_armored(
+      cert,
+      revocation_armored,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_apply_revocation_armoredPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_apply_revocation_armored');
+  late final _pgp_certificate_apply_revocation_armored =
+      _pgp_certificate_apply_revocation_armoredPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
   /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
   ///
   /// # Safety

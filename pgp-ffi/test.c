@@ -323,6 +323,65 @@ int main(void) {
   pgp_certificate_free(locked);
   pgp_certificate_free(unlocked);
 
+  struct Certificate *revocable = NULL;
+  rc = pgp_key_generate("revocable@example.org", &revocable);
+  if (rc != 0 || revocable == NULL) {
+    fprintf(stderr, "pgp_key_generate (revocable) failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  char *standalone_revocation = NULL;
+  rc = pgp_certificate_generate_revocation_armored(
+      revocable, 2, "key compromised", &standalone_revocation);
+  if (rc != 0 || standalone_revocation == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_generate_revocation_armored failed: rc=%" PRId32
+            "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revocable);
+    return 1;
+  }
+
+  struct Certificate *revoked_via_standalone = NULL;
+  rc = pgp_certificate_apply_revocation_armored(
+      revocable, standalone_revocation, &revoked_via_standalone);
+  if (rc != 0 || revoked_via_standalone == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_apply_revocation_armored failed: rc=%" PRId32
+            "\n",
+            rc);
+    free(standalone_revocation);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revocable);
+    return 1;
+  }
+  free(standalone_revocation);
+
+  uint8_t standalone_revoked_flag = 0;
+  uint8_t standalone_reason = 0;
+  char *standalone_message = NULL;
+  rc = pgp_certificate_revocation_info(revoked_via_standalone,
+                                        &standalone_revoked_flag,
+                                        &standalone_reason,
+                                        &standalone_message);
+  if (rc != 0 || standalone_revoked_flag != 1 || standalone_reason != 2) {
+    fprintf(stderr,
+            "pgp_certificate_apply_revocation_armored did not apply the "
+            "standalone revocation: rc=%" PRId32 " revoked=%u reason=%u\n",
+            rc, standalone_revoked_flag, standalone_reason);
+    free(standalone_message);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revocable);
+    pgp_certificate_free(revoked_via_standalone);
+    return 1;
+  }
+  free(standalone_message);
+  pgp_certificate_free(revocable);
+  pgp_certificate_free(revoked_via_standalone);
+
   char *armored = NULL;
   rc = pgp_certificate_export_armored(cert, &armored);
   if (rc != 0 || armored == NULL) {

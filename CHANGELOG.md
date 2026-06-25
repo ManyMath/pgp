@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Add `Certificate.generateRevocationArmored({reason, message})` and
+  `Certificate.applyRevocationArmored(armored)`: the `gpg --gen-revoke`
+  workflow. Generate and store a revocation certificate offline right after
+  creating a key, so it can still be revoked later via
+  `applyRevocationArmored` even if the secret key or its passphrase is
+  subsequently lost; unlike `revoke`, applying a pre-generated revocation
+  needs no secret key material at all.
 - Add `Certificate.setPrimaryUserId(userId)`, promoting `userId` to the
   certificate's primary user ID (the one implementations show by default
   when a certificate has more than one): the mutation counterpart to the

@@ -151,6 +151,41 @@ int32_t pgp_certificate_revocation_info(const struct Certificate *cert,
                                         char **out_message);
 
 /**
+ * Build a standalone, ASCII-armored revocation certificate for `cert`
+ * *without* applying it: the `gpg --gen-revoke` workflow: generate this
+ * once (e.g. right after key creation) and store it offline, so the
+ * certificate can still be revoked later even if the secret key or its
+ * passphrase is subsequently lost. Apply it later with
+ * `pgp_certificate_apply_revocation_armored`. Uses the same reason code
+ * and message conventions as `pgp_certificate_revoke`.
+ * Caller must free `*armored` with `free()`.
+ *
+ * # Safety
+ * `cert` and `armored` must be non-null. `message`, if non-null, must be a
+ * valid NUL-terminated C string.
+ */
+int32_t pgp_certificate_generate_revocation_armored(const struct Certificate *cert,
+                                                    uint8_t reason,
+                                                    const char *message,
+                                                    char **armored);
+
+/**
+ * Apply a standalone revocation certificate (produced by
+ * `pgp_certificate_generate_revocation_armored`, or any other RFC 4880
+ * certificate-revocation signature in ASCII armor) to `cert`, writing the
+ * now-revoked certificate to `*new_cert`. `cert` itself is left unmodified.
+ * Unlike `pgp_certificate_revoke`, this needs no secret key material at
+ * all: the signature was already produced when the revocation
+ * certificate was generated.
+ *
+ * # Safety
+ * `cert`, `revocation_armored`, and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_apply_revocation_armored(const struct Certificate *cert,
+                                                 const char *revocation_armored,
+                                                 struct Certificate **new_cert);
+
+/**
  * Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
  *
  * # Safety

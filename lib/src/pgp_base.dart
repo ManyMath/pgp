@@ -380,6 +380,51 @@ class Certificate {
     }
   }
 
+  /// Generates a standalone, ASCII-armored revocation certificate for this
+  /// certificate *without* applying it: the `gpg --gen-revoke` workflow.
+  /// Store the result somewhere safe (e.g. offline) right after generating
+  /// a key, so it can still be revoked later via [applyRevocationArmored]
+  /// even if the secret key or its passphrase is subsequently lost.
+  ///
+  /// [reason] and [message] use the same conventions as [revoke].
+  String generateRevocationArmored({
+    RevocationReason reason = RevocationReason.unspecified,
+    String? message,
+  }) {
+    final messagePointer = message?.toNativeUtf8();
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_generate_revocation_armored(
+        _ptr,
+        reason.code,
+        messagePointer?.cast() ?? nullptr,
+        out,
+      );
+      if (code != 0) throw PgpException(code);
+      final armored = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      return armored;
+    } finally {
+      if (messagePointer != null) calloc.free(messagePointer);
+      calloc.free(out);
+    }
+  }
+
+  /// Applies a standalone revocation certificate (produced by
+  /// [generateRevocationArmored], or any other RFC 4880
+  /// certificate-revocation signature in ASCII armor) to this certificate,
+  /// returning the now-revoked certificate. This certificate itself is left
+  /// unmodified. Unlike [revoke], this needs no secret key material at all.
+  Certificate applyRevocationArmored(String revocationArmored) {
+    final armoredPointer = revocationArmored.toNativeUtf8();
+    try {
+      return _derive((out) => _bindings.pgp_certificate_apply_revocation_armored(
+          _ptr, armoredPointer.cast(), out));
+    } finally {
+      calloc.free(armoredPointer);
+    }
+  }
+
   /// Adds a transport-encryption subkey, returning the updated certificate.
   Certificate addTransportEncryptionSubkey() => _derive((out) =>
       _bindings.pgp_certificate_add_transport_encryption_subkey(_ptr, out));
