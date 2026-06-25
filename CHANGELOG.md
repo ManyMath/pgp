@@ -1,5 +1,10 @@
 ## Unreleased
 
+- `SignedPlaintext` and `VerifiedBytes` gain a `signedAtEpoch` field (plus
+  `hasSignedAt`/`signedAtDate` getters), populated by `verifyWithSigner`,
+  `verifyBytesWithSigner`, `verifyCleartextWithSigner`, `decryptAndVerify`,
+  and `decryptAndVerifySymmetric`: the signature's own creation time,
+  previously discarded once the signer's fingerprint was confirmed.
 - Add `Certificate.encryptAndSignSymmetric(plaintext, passphrase)` and
   `Certificate.decryptAndVerifySymmetric(message, passphrase)`: the
   passphrase-only counterpart to `PGP.encryptAndSign`/

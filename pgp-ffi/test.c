@@ -433,10 +433,12 @@ int main(void) {
 
   char *symmetric_plaintext = NULL;
   char *symmetric_signer_fp = NULL;
+  int64_t symmetric_signed_at = 0;
   rc = pgp_decrypt_and_verify_string_symmetric(
       symmetric_signer, symmetric_signed, "correct horse battery staple",
-      &symmetric_plaintext, &symmetric_signer_fp);
+      &symmetric_plaintext, &symmetric_signer_fp, &symmetric_signed_at);
   if (rc != 0 || symmetric_plaintext == NULL || symmetric_signer_fp == NULL ||
+      symmetric_signed_at <= 0 ||
       strcmp(symmetric_plaintext, "sign+symmetric test payload") != 0) {
     fprintf(stderr,
             "pgp_decrypt_and_verify_string_symmetric failed: rc=%" PRId32

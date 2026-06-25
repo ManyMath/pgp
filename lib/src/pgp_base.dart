@@ -215,10 +215,23 @@ class SignedPlaintext {
   /// 40-character uppercase hex fingerprint of the signing subkey.
   final String signerFingerprint;
 
+  /// The signature's own creation time, as seconds since the Unix epoch, or
+  /// 0 if absent.
+  final int signedAtEpoch;
+
   const SignedPlaintext({
     required this.plaintext,
     required this.signerFingerprint,
+    this.signedAtEpoch = 0,
   });
+
+  /// Whether [signedAtEpoch] carries a value.
+  bool get hasSignedAt => signedAtEpoch > 0;
+
+  /// [signedAtEpoch] as a [DateTime], or null if absent.
+  DateTime? get signedAtDate => hasSignedAt
+      ? DateTime.fromMillisecondsSinceEpoch(signedAtEpoch * 1000, isUtc: true)
+      : null;
 }
 
 /// Raw verified bytes and signer fingerprint returned by
@@ -230,10 +243,23 @@ class VerifiedBytes {
   /// 40-character uppercase hex fingerprint of the signing subkey.
   final String signerFingerprint;
 
+  /// The signature's own creation time, as seconds since the Unix epoch, or
+  /// 0 if absent.
+  final int signedAtEpoch;
+
   const VerifiedBytes({
     required this.plaintext,
     required this.signerFingerprint,
+    this.signedAtEpoch = 0,
   });
+
+  /// Whether [signedAtEpoch] carries a value.
+  bool get hasSignedAt => signedAtEpoch > 0;
+
+  /// [signedAtEpoch] as a [DateTime], or null if absent.
+  DateTime? get signedAtDate => hasSignedAt
+      ? DateTime.fromMillisecondsSinceEpoch(signedAtEpoch * 1000, isUtc: true)
+      : null;
 }
 
 /// Status code returned by a `pgp-ffi` call.
@@ -306,23 +332,30 @@ class Certificate {
     final msgPtr = message.toNativeUtf8();
     final plaintextOut = calloc<Pointer<Char>>();
     final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
     try {
       final code = _bindings.pgp_certificate_verify_string(
         _ptr,
         msgPtr.cast(),
         plaintextOut,
         fpOut,
+        epochOut,
       );
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
       calloc.free(plaintextOut.value);
       calloc.free(fpOut.value);
-      return SignedPlaintext(plaintext: pt, signerFingerprint: fp);
+      return SignedPlaintext(
+        plaintext: pt,
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+      );
     } finally {
       calloc.free(msgPtr);
       calloc.free(plaintextOut);
       calloc.free(fpOut);
+      calloc.free(epochOut);
     }
   }
 
@@ -777,7 +810,7 @@ class Certificate {
     final p2 = armoredSig.toNativeUtf8();
     try {
       final code = _bindings.pgp_certificate_verify_detached(
-          _ptr, p1.cast(), p2.cast(), nullptr);
+          _ptr, p1.cast(), p2.cast(), nullptr, nullptr);
       if (code != 0) throw PgpException(code);
       return true;
     } finally {
@@ -797,7 +830,7 @@ class Certificate {
     final fpOut = calloc<Pointer<Char>>();
     try {
       final code = _bindings.pgp_certificate_verify_detached(
-          _ptr, p1.cast(), p2.cast(), fpOut);
+          _ptr, p1.cast(), p2.cast(), fpOut, nullptr);
       if (code != 0) throw PgpException(code);
       final fp = fpOut.value.cast<Utf8>().toDartString();
       calloc.free(fpOut.value);
@@ -942,7 +975,7 @@ class Certificate {
     final outLen = calloc<UintPtr>();
     try {
       final code = _bindings.pgp_certificate_verify_bytes(
-          _ptr, msgPtr.cast(), outPtr, outLen, nullptr);
+          _ptr, msgPtr.cast(), outPtr, outLen, nullptr, nullptr);
       if (code != 0) throw PgpException(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
@@ -962,21 +995,27 @@ class Certificate {
     final outPtr = calloc<Pointer<Uint8>>();
     final outLen = calloc<UintPtr>();
     final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
     try {
       final code = _bindings.pgp_certificate_verify_bytes(
-          _ptr, msgPtr.cast(), outPtr, outLen, fpOut);
+          _ptr, msgPtr.cast(), outPtr, outLen, fpOut, epochOut);
       if (code != 0) throw PgpException(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
       calloc.free(outPtr.value);
       final fp = fpOut.value.cast<Utf8>().toDartString();
       calloc.free(fpOut.value);
-      return VerifiedBytes(plaintext: result, signerFingerprint: fp);
+      return VerifiedBytes(
+        plaintext: result,
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+      );
     } finally {
       calloc.free(msgPtr);
       calloc.free(outPtr);
       calloc.free(outLen);
       calloc.free(fpOut);
+      calloc.free(epochOut);
     }
   }
 
@@ -1002,23 +1041,30 @@ class Certificate {
     final msgPtr = message.toNativeUtf8();
     final plaintextOut = calloc<Pointer<Char>>();
     final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
     try {
       final code = _bindings.pgp_certificate_verify_cleartext(
         _ptr,
         msgPtr.cast(),
         plaintextOut,
         fpOut,
+        epochOut,
       );
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
       calloc.free(plaintextOut.value);
       calloc.free(fpOut.value);
-      return SignedPlaintext(plaintext: pt, signerFingerprint: fp);
+      return SignedPlaintext(
+        plaintext: pt,
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+      );
     } finally {
       calloc.free(msgPtr);
       calloc.free(plaintextOut);
       calloc.free(fpOut);
+      calloc.free(epochOut);
     }
   }
 
@@ -1031,6 +1077,7 @@ class Certificate {
     final msgPtr = message.toNativeUtf8();
     final plaintextOut = calloc<Pointer<Char>>();
     final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
     try {
       final code = _bindings.pgp_decrypt_and_verify_string(
         _ptr,
@@ -1038,17 +1085,23 @@ class Certificate {
         msgPtr.cast(),
         plaintextOut,
         fpOut,
+        epochOut,
       );
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
       calloc.free(plaintextOut.value);
       calloc.free(fpOut.value);
-      return SignedPlaintext(plaintext: pt, signerFingerprint: fp);
+      return SignedPlaintext(
+        plaintext: pt,
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+      );
     } finally {
       calloc.free(msgPtr);
       calloc.free(plaintextOut);
       calloc.free(fpOut);
+      calloc.free(epochOut);
     }
   }
 
@@ -1086,6 +1139,7 @@ class Certificate {
     final ppPtr = passphrase.toNativeUtf8();
     final plaintextOut = calloc<Pointer<Char>>();
     final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
     try {
       final code = _bindings.pgp_decrypt_and_verify_string_symmetric(
         _ptr,
@@ -1093,18 +1147,24 @@ class Certificate {
         ppPtr.cast(),
         plaintextOut,
         fpOut,
+        epochOut,
       );
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
       calloc.free(plaintextOut.value);
       calloc.free(fpOut.value);
-      return SignedPlaintext(plaintext: pt, signerFingerprint: fp);
+      return SignedPlaintext(
+        plaintext: pt,
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+      );
     } finally {
       calloc.free(msgPtr);
       calloc.free(ppPtr);
       calloc.free(plaintextOut);
       calloc.free(fpOut);
+      calloc.free(epochOut);
     }
   }
 

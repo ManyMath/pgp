@@ -124,6 +124,18 @@ void main() {
     cert.dispose();
   });
 
+  test('verifyWithSigner reports the signature creation time', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final signed = cert.sign('hello signed OpenPGP');
+    final result = cert.verifyWithSigner(signed);
+
+    expect(result.hasSignedAt, isTrue);
+    expect(result.signedAtEpoch, greaterThan(0));
+    expect(result.signedAtDate, isNotNull);
+
+    cert.dispose();
+  });
+
   test('revoke returns a revoked certificate', () {
     final cert = pgp.generateKey('someone@example.org');
     final revoked = cert.revoke();
@@ -933,6 +945,7 @@ void main() {
       expect(result.plaintext, 'hello signed+enc');
       expect(result.signerFingerprint.length, 40);
       expect(result.signerFingerprint, matches(RegExp(r'^[0-9A-F]{40}$')));
+      expect(result.hasSignedAt, isTrue);
 
       alicePub.dispose();
       bobPub.dispose();

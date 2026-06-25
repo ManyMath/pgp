@@ -115,14 +115,19 @@ int32_t pgp_certificate_sign_string(const struct Certificate *cert,
  * produced the valid signature is written to `*signer_fingerprint` (caller
  * must free with `free()`). Pass null if the signer identity isn't needed.
  *
+ * If `signature_creation_epoch` is non-null, the signature's own creation
+ * time is written to `*signature_creation_epoch` as seconds since the Unix
+ * epoch (0 if absent). Pass null if not needed.
+ *
  * # Safety
  * `cert`, `armored_message`, and `plaintext` must be non-null.
- * `signer_fingerprint` may be null.
+ * `signer_fingerprint` and `signature_creation_epoch` may be null.
  */
 int32_t pgp_certificate_verify_string(const struct Certificate *cert,
                                       const char *armored_message,
                                       char **plaintext,
-                                      char **signer_fingerprint);
+                                      char **signer_fingerprint,
+                                      int64_t *signature_creation_epoch);
 
 /**
  * Revoke the cert and write the updated cert to `*revoked_cert`.
@@ -516,14 +521,19 @@ int32_t pgp_certificate_sign_detached(const struct Certificate *cert,
  * produced the valid signature is written to `*signer_fingerprint` (caller
  * must free with `free()`). Pass null if the signer identity isn't needed.
  *
+ * If `signature_creation_epoch` is non-null, the signature's own creation
+ * time is written to `*signature_creation_epoch` as seconds since the Unix
+ * epoch (0 if absent). Pass null if not needed.
+ *
  * # Safety
  * `cert`, `plaintext`, and `armored_sig` must be non-null.
- * `signer_fingerprint` may be null.
+ * `signer_fingerprint` and `signature_creation_epoch` may be null.
  */
 int32_t pgp_certificate_verify_detached(const struct Certificate *cert,
                                         const char *plaintext,
                                         const char *armored_sig,
-                                        char **signer_fingerprint);
+                                        char **signer_fingerprint,
+                                        int64_t *signature_creation_epoch);
 
 /**
  * Generate a new certificate carrying `user_id` with an optional validity
@@ -587,14 +597,21 @@ int32_t pgp_encrypt_and_sign_string(const struct Certificate *signer_cert,
  * and the signer's fingerprint to `*fingerprint_out`. Both must be freed with
  * `free()`. Returns `Failed` (-3) if the message carries no valid signature.
  *
+ * If `signature_creation_epoch` is non-null, the signature's own creation
+ * time is written to `*signature_creation_epoch` as seconds since the Unix
+ * epoch (0 if absent). Pass null if not needed.
+ *
  * # Safety
- * All pointers must be non-null.
+ * `decrypt_cert`, `verify_cert`, `armored_message`, `plaintext_out`, and
+ * `fingerprint_out` must be non-null. `signature_creation_epoch` may be
+ * null.
  */
 int32_t pgp_decrypt_and_verify_string(const struct Certificate *decrypt_cert,
                                       const struct Certificate *verify_cert,
                                       const char *armored_message,
                                       char **plaintext_out,
-                                      char **fingerprint_out);
+                                      char **fingerprint_out,
+                                      int64_t *signature_creation_epoch);
 
 /**
  * Encrypt `data` (raw bytes, `len` long) to the certificate and write an
@@ -647,15 +664,21 @@ int32_t pgp_certificate_sign_bytes(const struct Certificate *cert,
  * produced the valid signature is written to `*signer_fingerprint` (caller
  * must free with `free()`). Pass null if the signer identity isn't needed.
  *
+ * If `signature_creation_epoch` is non-null, the signature's own creation
+ * time is written to `*signature_creation_epoch` as seconds since the Unix
+ * epoch (0 if absent). Pass null if not needed.
+ *
  * # Safety
  * `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
- * non-null. `signer_fingerprint` may be null.
+ * non-null. `signer_fingerprint` and `signature_creation_epoch` may be
+ * null.
  */
 int32_t pgp_certificate_verify_bytes(const struct Certificate *cert,
                                      const char *armored_message,
                                      uint8_t **plaintext_out,
                                      uintptr_t *plaintext_len,
-                                     char **signer_fingerprint);
+                                     char **signer_fingerprint,
+                                     int64_t *signature_creation_epoch);
 
 /**
  * Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
@@ -694,14 +717,19 @@ int32_t pgp_certificate_sign_cleartext(const struct Certificate *cert,
  * produced the valid signature is written to `*signer_fingerprint` (caller
  * must free with `free()`). Pass null if the signer identity isn't needed.
  *
+ * If `signature_creation_epoch` is non-null, the signature's own creation
+ * time is written to `*signature_creation_epoch` as seconds since the Unix
+ * epoch (0 if absent). Pass null if not needed.
+ *
  * # Safety
  * `cert`, `signed_message`, and `plaintext_out` must be non-null.
- * `signer_fingerprint` may be null.
+ * `signer_fingerprint` and `signature_creation_epoch` may be null.
  */
 int32_t pgp_certificate_verify_cleartext(const struct Certificate *cert,
                                          const char *signed_message,
                                          char **plaintext_out,
-                                         char **signer_fingerprint);
+                                         char **signer_fingerprint,
+                                         int64_t *signature_creation_epoch);
 
 /**
  * Encrypt `plaintext` with `passphrase` (no public key required), writing an
@@ -752,14 +780,21 @@ int32_t pgp_encrypt_and_sign_string_symmetric(const struct Certificate *signer_c
  * with `free()`. Returns `Failed` (-3) if the passphrase is wrong, the
  * message has no SKESK, or it carries no valid signature.
  *
+ * If `signature_creation_epoch` is non-null, the signature's own creation
+ * time is written to `*signature_creation_epoch` as seconds since the Unix
+ * epoch (0 if absent). Pass null if not needed.
+ *
  * # Safety
- * All pointers must be non-null.
+ * `verify_cert`, `armored_message`, `passphrase`, `plaintext_out`, and
+ * `fingerprint_out` must be non-null. `signature_creation_epoch` may be
+ * null.
  */
 int32_t pgp_decrypt_and_verify_string_symmetric(const struct Certificate *verify_cert,
                                                 const char *armored_message,
                                                 const char *passphrase,
                                                 char **plaintext_out,
-                                                char **fingerprint_out);
+                                                char **fingerprint_out,
+                                                int64_t *signature_creation_epoch);
 
 /**
  * Merge updates from `other_cert` into `base_cert`: new signatures,

@@ -281,38 +281,45 @@ class PgpFfiBindings {
   /// produced the valid signature is written to `*signer_fingerprint` (caller
   /// must free with `free()`). Pass null if the signer identity isn't needed.
   ///
+  /// If `signature_creation_epoch` is non-null, the signature's own creation
+  /// time is written to `*signature_creation_epoch` as seconds since the Unix
+  /// epoch (0 if absent). Pass null if not needed.
+  ///
   /// # Safety
   /// `cert`, `armored_message`, and `plaintext` must be non-null.
-  /// `signer_fingerprint` may be null.
+  /// `signer_fingerprint` and `signature_creation_epoch` may be null.
   int pgp_certificate_verify_string(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext,
     ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
+    ffi.Pointer<ffi.Int64> signature_creation_epoch,
   ) {
     return _pgp_certificate_verify_string(
       cert,
       armored_message,
       plaintext,
       signer_fingerprint,
+      signature_creation_epoch,
     );
   }
 
   late final _pgp_certificate_verify_stringPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_verify_string');
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_string');
   late final _pgp_certificate_verify_string =
       _pgp_certificate_verify_stringPtr.asFunction<
           int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>();
 
   /// Revoke the cert and write the updated cert to `*revoked_cert`.
   ///
@@ -1146,35 +1153,45 @@ class PgpFfiBindings {
   /// produced the valid signature is written to `*signer_fingerprint` (caller
   /// must free with `free()`). Pass null if the signer identity isn't needed.
   ///
+  /// If `signature_creation_epoch` is non-null, the signature's own creation
+  /// time is written to `*signature_creation_epoch` as seconds since the Unix
+  /// epoch (0 if absent). Pass null if not needed.
+  ///
   /// # Safety
   /// `cert`, `plaintext`, and `armored_sig` must be non-null.
-  /// `signer_fingerprint` may be null.
+  /// `signer_fingerprint` and `signature_creation_epoch` may be null.
   int pgp_certificate_verify_detached(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> plaintext,
     ffi.Pointer<ffi.Char> armored_sig,
     ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
+    ffi.Pointer<ffi.Int64> signature_creation_epoch,
   ) {
     return _pgp_certificate_verify_detached(
       cert,
       plaintext,
       armored_sig,
       signer_fingerprint,
+      signature_creation_epoch,
     );
   }
 
   late final _pgp_certificate_verify_detachedPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_verify_detached');
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_detached');
   late final _pgp_certificate_verify_detached =
       _pgp_certificate_verify_detachedPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>();
 
   /// Generate a new certificate carrying `user_id` with an optional validity
   /// period. `validity_seconds == 0` means no expiry.
@@ -1312,14 +1329,21 @@ class PgpFfiBindings {
   /// and the signer's fingerprint to `*fingerprint_out`. Both must be freed with
   /// `free()`. Returns `Failed` (-3) if the message carries no valid signature.
   ///
+  /// If `signature_creation_epoch` is non-null, the signature's own creation
+  /// time is written to `*signature_creation_epoch` as seconds since the Unix
+  /// epoch (0 if absent). Pass null if not needed.
+  ///
   /// # Safety
-  /// All pointers must be non-null.
+  /// `decrypt_cert`, `verify_cert`, `armored_message`, `plaintext_out`, and
+  /// `fingerprint_out` must be non-null. `signature_creation_epoch` may be
+  /// null.
   int pgp_decrypt_and_verify_string(
     ffi.Pointer<Certificate> decrypt_cert,
     ffi.Pointer<Certificate> verify_cert,
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext_out,
     ffi.Pointer<ffi.Pointer<ffi.Char>> fingerprint_out,
+    ffi.Pointer<ffi.Int64> signature_creation_epoch,
   ) {
     return _pgp_decrypt_and_verify_string(
       decrypt_cert,
@@ -1327,18 +1351,19 @@ class PgpFfiBindings {
       armored_message,
       plaintext_out,
       fingerprint_out,
+      signature_creation_epoch,
     );
   }
 
   late final _pgp_decrypt_and_verify_stringPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_decrypt_and_verify_string');
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>>('pgp_decrypt_and_verify_string');
   late final _pgp_decrypt_and_verify_string =
       _pgp_decrypt_and_verify_stringPtr.asFunction<
           int Function(
@@ -1346,7 +1371,8 @@ class PgpFfiBindings {
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>();
 
   /// Encrypt `data` (raw bytes, `len` long) to the certificate and write an
   /// ASCII-armored message to `*armored_message`. Caller must free
@@ -1457,15 +1483,21 @@ class PgpFfiBindings {
   /// produced the valid signature is written to `*signer_fingerprint` (caller
   /// must free with `free()`). Pass null if the signer identity isn't needed.
   ///
+  /// If `signature_creation_epoch` is non-null, the signature's own creation
+  /// time is written to `*signature_creation_epoch` as seconds since the Unix
+  /// epoch (0 if absent). Pass null if not needed.
+  ///
   /// # Safety
   /// `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
-  /// non-null. `signer_fingerprint` may be null.
+  /// non-null. `signer_fingerprint` and `signature_creation_epoch` may be
+  /// null.
   int pgp_certificate_verify_bytes(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Pointer<ffi.Uint8>> plaintext_out,
     ffi.Pointer<ffi.UintPtr> plaintext_len,
     ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
+    ffi.Pointer<ffi.Int64> signature_creation_epoch,
   ) {
     return _pgp_certificate_verify_bytes(
       cert,
@@ -1473,18 +1505,19 @@ class PgpFfiBindings {
       plaintext_out,
       plaintext_len,
       signer_fingerprint,
+      signature_creation_epoch,
     );
   }
 
   late final _pgp_certificate_verify_bytesPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-                  ffi.Pointer<ffi.UintPtr>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_verify_bytes');
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+              ffi.Pointer<ffi.UintPtr>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_bytes');
   late final _pgp_certificate_verify_bytes =
       _pgp_certificate_verify_bytesPtr.asFunction<
           int Function(
@@ -1492,7 +1525,8 @@ class PgpFfiBindings {
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
               ffi.Pointer<ffi.UintPtr>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>();
 
   /// Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
   /// and write an ASCII-armored message to `*armored_message`. Caller must free
@@ -1572,38 +1606,45 @@ class PgpFfiBindings {
   /// produced the valid signature is written to `*signer_fingerprint` (caller
   /// must free with `free()`). Pass null if the signer identity isn't needed.
   ///
+  /// If `signature_creation_epoch` is non-null, the signature's own creation
+  /// time is written to `*signature_creation_epoch` as seconds since the Unix
+  /// epoch (0 if absent). Pass null if not needed.
+  ///
   /// # Safety
   /// `cert`, `signed_message`, and `plaintext_out` must be non-null.
-  /// `signer_fingerprint` may be null.
+  /// `signer_fingerprint` and `signature_creation_epoch` may be null.
   int pgp_certificate_verify_cleartext(
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Char> signed_message,
     ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext_out,
     ffi.Pointer<ffi.Pointer<ffi.Char>> signer_fingerprint,
+    ffi.Pointer<ffi.Int64> signature_creation_epoch,
   ) {
     return _pgp_certificate_verify_cleartext(
       cert,
       signed_message,
       plaintext_out,
       signer_fingerprint,
+      signature_creation_epoch,
     );
   }
 
   late final _pgp_certificate_verify_cleartextPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_verify_cleartext');
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_cleartext');
   late final _pgp_certificate_verify_cleartext =
       _pgp_certificate_verify_cleartextPtr.asFunction<
           int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>();
 
   /// Encrypt `plaintext` with `passphrase` (no public key required), writing an
   /// ASCII-armored message to `*armored_message`. Caller must free
@@ -1705,14 +1746,21 @@ class PgpFfiBindings {
   /// with `free()`. Returns `Failed` (-3) if the passphrase is wrong, the
   /// message has no SKESK, or it carries no valid signature.
   ///
+  /// If `signature_creation_epoch` is non-null, the signature's own creation
+  /// time is written to `*signature_creation_epoch` as seconds since the Unix
+  /// epoch (0 if absent). Pass null if not needed.
+  ///
   /// # Safety
-  /// All pointers must be non-null.
+  /// `verify_cert`, `armored_message`, `passphrase`, `plaintext_out`, and
+  /// `fingerprint_out` must be non-null. `signature_creation_epoch` may be
+  /// null.
   int pgp_decrypt_and_verify_string_symmetric(
     ffi.Pointer<Certificate> verify_cert,
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Char> passphrase,
     ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext_out,
     ffi.Pointer<ffi.Pointer<ffi.Char>> fingerprint_out,
+    ffi.Pointer<ffi.Int64> signature_creation_epoch,
   ) {
     return _pgp_decrypt_and_verify_string_symmetric(
       verify_cert,
@@ -1720,6 +1768,7 @@ class PgpFfiBindings {
       passphrase,
       plaintext_out,
       fingerprint_out,
+      signature_creation_epoch,
     );
   }
 
@@ -1730,7 +1779,8 @@ class PgpFfiBindings {
                   ffi.Pointer<ffi.Char>,
                   ffi.Pointer<ffi.Char>,
                   ffi.Pointer<ffi.Pointer<ffi.Char>>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
+                  ffi.Pointer<ffi.Int64>)>>(
       'pgp_decrypt_and_verify_string_symmetric');
   late final _pgp_decrypt_and_verify_string_symmetric =
       _pgp_decrypt_and_verify_string_symmetricPtr.asFunction<
@@ -1739,7 +1789,8 @@ class PgpFfiBindings {
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>();
 
   /// Merge updates from `other_cert` into `base_cert`: new signatures,
   /// certifications, subkeys, and revocations: writing the combined
