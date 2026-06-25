@@ -1814,13 +1814,13 @@ pub unsafe extern "C" fn pgp_certificate_userid_certifications(
 /// `pgp_certificate_userid_certifications`, which only reports issuer
 /// fingerprints without checking the signature itself). Writes `1`/`0` to
 /// `*out_verified`. Returns NotFound if `user_id` isn't present on
-/// `target_cert`, or if no certification issued by `issuer_cert`'s
-/// fingerprint is attached to it. Matching is by the certification
-/// signature's `IssuerFingerprint` subpacket; a certification carrying only
-/// a legacy `Issuer` (bare key ID) subpacket and no fingerprint subpacket
-/// will not be found even if it was genuinely issued by `issuer_cert`:
-/// every certification produced by `pgp_certificate_certify_userid` always
-/// carries the fingerprint subpacket, so this only affects certifications
+/// `target_cert`, or if no certification issued by `issuer_cert` is attached
+/// to it. Matching prefers the certification signature's `IssuerFingerprint`
+/// subpacket, but falls back to the legacy bare-key-ID `Issuer` subpacket
+/// (matched against `issuer_cert`'s own key ID) for certifications that
+/// carry only that older subpacket and no fingerprint: every certification
+/// produced by `pgp_certificate_certify_userid` always carries the
+/// fingerprint subpacket, so this fallback only matters for certifications
 /// imported from other, older implementations. If `issuer_cert` has
 /// certified `user_id` more than once, the first matching certification
 /// (Sequoia's own ordering) is the one verified, matching
@@ -1867,13 +1867,15 @@ pub unsafe extern "C" fn pgp_certificate_verify_userid_certification(
     };
 
     let issuer_fp = issuer_cert.fingerprint();
+    let issuer_keyid = issuer_fp.clone().into();
     let issuer_key = issuer_cert.primary_key().key();
     let target_key = target_cert.primary_key().key();
 
-    let sig = match ua
-        .certifications()
-        .find(|sig| sig.issuer_fingerprints().any(|fp| *fp == issuer_fp))
-    {
+    let sig = match ua.certifications().find(|sig| {
+        sig.issuer_fingerprints().any(|fp| *fp == issuer_fp)
+            || (sig.issuer_fingerprints().next().is_none()
+                && sig.issuers().any(|keyid| *keyid == issuer_keyid))
+    }) {
         Some(sig) => sig,
         None => return FFIError::NotFound as i32,
     };
@@ -6302,6 +6304,73 @@ mod tests {
                 pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), &mut certified),
                 FFIError::Ok as i32
             );
+
+            let mut verified: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_userid_certification(
+                    certified,
+                    alice,
+                    user_id.as_ptr(),
+                    &mut verified,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(verified, 1);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(certified);
+        }
+    }
+
+    #[test]
+    fn verify_userid_certification_falls_back_to_legacy_issuer_keyid() {
+        unsafe {
+            let alice = generate_cert("alice-legacy-issuer@example.org");
+            let bob = generate_cert("bob-legacy-issuer@example.org");
+            let user_id_str = "bob-legacy-issuer@example.org";
+            let user_id = CString::new(user_id_str).unwrap();
+
+            let alice_wrapper = &*alice;
+            let bob_wrapper = &*bob;
+            let alice_cert = &*alice_wrapper.0;
+            let bob_cert = (&*bob_wrapper.0).clone();
+
+            let target_uid = bob_cert
+                .userids()
+                .find(|ua| ua.userid().value() == user_id_str.as_bytes())
+                .unwrap()
+                .userid()
+                .clone();
+
+            let mut signer = alice_cert
+                .primary_key()
+                .key()
+                .clone()
+                .parts_into_secret()
+                .unwrap()
+                .into_keypair()
+                .unwrap();
+
+            // Build the certification with an explicit `Issuer` (bare key
+            // ID) subpacket and nothing else identifying the signer.
+            // `sign_hash` only auto-adds an `IssuerFingerprint` subpacket
+            // when *neither* subpacket has already been set, so this
+            // reproduces a certification from an implementation that never
+            // emits the modern fingerprint subpacket: the fallback path
+            // under test.
+            let builder = sequoia_openpgp::packet::signature::SignatureBuilder::new(
+                sequoia_openpgp::types::SignatureType::GenericCertification,
+            )
+            .set_issuer(alice_cert.fingerprint().into())
+            .unwrap();
+            let sig = target_uid.bind(&mut signer, &bob_cert, builder).unwrap();
+            assert!(sig.issuer_fingerprints().next().is_none());
+            assert!(sig.issuers().next().is_some());
+
+            let updated = bob_cert.insert_packets(vec![sig]).unwrap();
+            let inner = Box::into_raw(Box::new(updated));
+            let certified = Box::into_raw(Box::new(Certificate(inner)));
 
             let mut verified: u8 = 0;
             assert_eq!(
