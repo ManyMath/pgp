@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Add `Certificate.revocationInfo()`, returning a `RevocationInfo`
+  (`isRevoked`, `reasonCode`, `message`) describing whether the certificate
+  itself has been revoked via `Certificate.revoke()`: the whole-certificate
+  counterpart to the per-subkey/per-user-ID `isRevoked` flags already on
+  `subkeys()`/`userIdsInfo()`, and the readback half of the reason/message
+  `revoke()` already accepts as input.
 - Add `Certificate.merge(other)`, importing updates from `other`: new
   signatures, certifications, subkeys, and revocations: into a combined
   certificate. `other` must share this certificate's primary-key fingerprint

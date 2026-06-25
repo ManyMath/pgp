@@ -154,6 +154,27 @@ class CertifierInfo {
   });
 }
 
+/// Whole-certificate revocation status returned by
+/// [Certificate.revocationInfo].
+class RevocationInfo {
+  /// Whether the certificate has been revoked (via [Certificate.revoke]).
+  final bool isRevoked;
+
+  /// The RFC 4880 reason-for-revocation code recorded on the revocation
+  /// signature, or 0 if not revoked or no reason was given.
+  final int reasonCode;
+
+  /// The human-readable revocation message, or an empty string if not
+  /// revoked or none was given.
+  final String message;
+
+  const RevocationInfo({
+    required this.isRevoked,
+    required this.reasonCode,
+    required this.message,
+  });
+}
+
 /// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify],
 /// [Certificate.verifyWithSigner], and [Certificate.verifyCleartextWithSigner].
 class SignedPlaintext {
@@ -325,6 +346,37 @@ class Certificate {
           _ptr, reason.code, messagePointer?.cast() ?? nullptr, out));
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
+    }
+  }
+
+  /// Reports whether this certificate itself has been revoked (via
+  /// [revoke]), and if so, the reason code and message recorded on the
+  /// revocation signature. [subkeys] and [userIdsInfo] already report
+  /// per-subkey/per-user-ID revocation; this is the whole-certificate
+  /// counterpart.
+  RevocationInfo revocationInfo() {
+    final revokedOut = calloc<Uint8>();
+    final reasonOut = calloc<Uint8>();
+    final messageOut = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_revocation_info(
+        _ptr,
+        revokedOut,
+        reasonOut,
+        messageOut,
+      );
+      if (code != 0) throw PgpException(code);
+      final message = messageOut.value.cast<Utf8>().toDartString();
+      calloc.free(messageOut.value);
+      return RevocationInfo(
+        isRevoked: revokedOut.value == 1,
+        reasonCode: reasonOut.value,
+        message: message,
+      );
+    } finally {
+      calloc.free(revokedOut);
+      calloc.free(reasonOut);
+      calloc.free(messageOut);
     }
   }
 

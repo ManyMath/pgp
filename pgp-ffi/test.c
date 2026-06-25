@@ -258,6 +258,24 @@ int main(void) {
   pgp_certificate_free(cert);
   cert = updated;
 
+  uint8_t revoked_flag = 0;
+  uint8_t revoked_reason = 0;
+  char *revoked_message = NULL;
+  rc = pgp_certificate_revocation_info(cert, &revoked_flag, &revoked_reason,
+                                        &revoked_message);
+  if (rc != 0 || revoked_flag != 1 || revoked_reason != 2 ||
+      revoked_message == NULL || strcmp(revoked_message, "key compromised") != 0) {
+    fprintf(stderr,
+            "pgp_certificate_revocation_info failed: rc=%" PRId32
+            " revoked=%u reason=%u message=%s\n",
+            rc, revoked_flag, revoked_reason,
+            revoked_message ? revoked_message : "(null)");
+    free(revoked_message);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  free(revoked_message);
+
   struct Certificate *locked = NULL;
   rc = pgp_certificate_lock(cert, "correct horse battery staple", &locked);
   if (rc != 0 || locked == NULL) {

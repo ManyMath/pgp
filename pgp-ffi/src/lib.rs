@@ -676,6 +676,53 @@ pub unsafe extern "C" fn pgp_certificate_revoke(
     FFIError::Ok as i32
 }
 
+/// Report whether `cert` itself has been revoked (via `pgp_certificate_revoke`),
+/// and if so, the reason code and message recorded on the revocation
+/// signature. `pgp_certificate_subkeys` and `pgp_certificate_userids_info`
+/// already report per-subkey/per-user-ID revocation; this is the
+/// whole-certificate counterpart.
+///
+/// Writes `1`/`0` to `*out_revoked`. If revoked, writes the RFC 4880
+/// reason-for-revocation code to `*out_reason` (0 otherwise) and the
+/// human-readable message to `*out_message` (empty string if none or if not
+/// revoked). If multiple revocation signatures are present, the most recent
+/// one (Sequoia's own ordering) is reported.
+/// Caller must free `*out_message` with `free()`.
+///
+/// # Safety
+/// `cert`, `out_revoked`, `out_reason`, and `out_message` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_revocation_info(
+    cert: *const Certificate,
+    out_revoked: *mut u8,
+    out_reason: *mut u8,
+    out_message: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || out_revoked.is_null() || out_reason.is_null() || out_message.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out_revoked = 0;
+    *out_reason = 0;
+    *out_message = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+    let policy = StandardPolicy::new();
+
+    let mut message = String::new();
+    if let RevocationStatus::Revoked(sigs) = sequoia_cert.revocation_status(&policy, None) {
+        *out_revoked = 1;
+        if let Some((code, reason)) = sigs[0].reason_for_revocation() {
+            *out_reason = code.into();
+            message = String::from_utf8_lossy(reason).into_owned();
+        }
+    }
+    write_c_string(&message, out_message)
+}
+
 /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
 ///
 /// # Safety
@@ -4008,6 +4055,106 @@ mod tests {
                 FFIError::Invalid as i32
             );
             assert!(revoked.is_null());
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    // --- certificate-level revocation readback ---
+
+    #[test]
+    fn revocation_info_reports_not_revoked_for_fresh_cert() {
+        unsafe {
+            let cert = generate_cert("revocation-info-fresh@example.org");
+
+            let mut revoked: u8 = 99;
+            let mut reason: u8 = 99;
+            let mut message: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revocation_info(cert, &mut revoked, &mut reason, &mut message),
+                FFIError::Ok as i32
+            );
+            assert_eq!(revoked, 0);
+            assert_eq!(reason, 0);
+            assert!(!message.is_null());
+            assert_eq!(CStr::from_ptr(message).to_str().unwrap(), "");
+
+            libc::free(message as *mut libc::c_void);
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn revocation_info_reports_reason_and_message_after_revoke() {
+        unsafe {
+            let cert = generate_cert("revocation-info-revoked@example.org");
+            let revoke_message = CString::new("key compromised").unwrap();
+
+            let mut revoked_cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke(
+                    cert,
+                    ReasonForRevocation::KeyCompromised.into(),
+                    revoke_message.as_ptr(),
+                    &mut revoked_cert,
+                ),
+                FFIError::Ok as i32
+            );
+
+            let mut revoked: u8 = 0;
+            let mut reason: u8 = 0;
+            let mut message: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revocation_info(
+                    revoked_cert,
+                    &mut revoked,
+                    &mut reason,
+                    &mut message
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(revoked, 1);
+            assert_eq!(reason, u8::from(ReasonForRevocation::KeyCompromised));
+            assert_eq!(
+                CStr::from_ptr(message).to_str().unwrap(),
+                "key compromised"
+            );
+
+            libc::free(message as *mut libc::c_void);
+            pgp_certificate_free(cert);
+            pgp_certificate_free(revoked_cert);
+        }
+    }
+
+    #[test]
+    fn revocation_info_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("revocation-info-null@example.org");
+            let mut revoked: u8 = 0;
+            let mut reason: u8 = 0;
+            let mut message: *mut libc::c_char = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_revocation_info(
+                    ptr::null(),
+                    &mut revoked,
+                    &mut reason,
+                    &mut message
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_revocation_info(cert, ptr::null_mut(), &mut reason, &mut message),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_revocation_info(cert, &mut revoked, ptr::null_mut(), &mut message),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_revocation_info(cert, &mut revoked, &mut reason, ptr::null_mut()),
+                FFIError::Null as i32
+            );
 
             pgp_certificate_free(cert);
         }

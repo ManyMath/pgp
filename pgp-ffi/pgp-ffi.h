@@ -129,6 +129,28 @@ int32_t pgp_certificate_revoke(const struct Certificate *cert,
                                struct Certificate **revoked_cert);
 
 /**
+ * Report whether `cert` itself has been revoked (via `pgp_certificate_revoke`),
+ * and if so, the reason code and message recorded on the revocation
+ * signature. `pgp_certificate_subkeys` and `pgp_certificate_userids_info`
+ * already report per-subkey/per-user-ID revocation; this is the
+ * whole-certificate counterpart.
+ *
+ * Writes `1`/`0` to `*out_revoked`. If revoked, writes the RFC 4880
+ * reason-for-revocation code to `*out_reason` (0 otherwise) and the
+ * human-readable message to `*out_message` (empty string if none or if not
+ * revoked). If multiple revocation signatures are present, the most recent
+ * one (Sequoia's own ordering) is reported.
+ * Caller must free `*out_message` with `free()`.
+ *
+ * # Safety
+ * `cert`, `out_revoked`, `out_reason`, and `out_message` must be non-null.
+ */
+int32_t pgp_certificate_revocation_info(const struct Certificate *cert,
+                                        uint8_t *out_revoked,
+                                        uint8_t *out_reason,
+                                        char **out_message);
+
+/**
  * Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
  *
  * # Safety

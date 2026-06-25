@@ -124,6 +124,29 @@ void main() {
     cert.dispose();
   });
 
+  test('revocationInfo reports not revoked for a fresh certificate', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final info = cert.revocationInfo();
+    expect(info.isRevoked, isFalse);
+    expect(info.reasonCode, 0);
+    expect(info.message, '');
+    cert.dispose();
+  });
+
+  test('revocationInfo reports the reason and message after revoke', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final revoked = cert.revoke(
+      reason: RevocationReason.keyCompromised,
+      message: 'key compromised',
+    );
+    final info = revoked.revocationInfo();
+    expect(info.isRevoked, isTrue);
+    expect(info.reasonCode, RevocationReason.keyCompromised.code);
+    expect(info.message, 'key compromised');
+    revoked.dispose();
+    cert.dispose();
+  });
+
   test('addSigningSubkey returns an updated certificate', () {
     final cert = pgp.generateKey('someone@example.org');
     final updated = cert.addSigningSubkey();

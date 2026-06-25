@@ -321,6 +321,48 @@ class PgpFfiBindings {
       int Function(ffi.Pointer<Certificate>, int, ffi.Pointer<ffi.Char>,
           ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
+  /// Report whether `cert` itself has been revoked (via `pgp_certificate_revoke`),
+  /// and if so, the reason code and message recorded on the revocation
+  /// signature. `pgp_certificate_subkeys` and `pgp_certificate_userids_info`
+  /// already report per-subkey/per-user-ID revocation; this is the
+  /// whole-certificate counterpart.
+  ///
+  /// Writes `1`/`0` to `*out_revoked`. If revoked, writes the RFC 4880
+  /// reason-for-revocation code to `*out_reason` (0 otherwise) and the
+  /// human-readable message to `*out_message` (empty string if none or if not
+  /// revoked). If multiple revocation signatures are present, the most recent
+  /// one (Sequoia's own ordering) is reported.
+  /// Caller must free `*out_message` with `free()`.
+  ///
+  /// # Safety
+  /// `cert`, `out_revoked`, `out_reason`, and `out_message` must be non-null.
+  int pgp_certificate_revocation_info(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Uint8> out_revoked,
+    ffi.Pointer<ffi.Uint8> out_reason,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> out_message,
+  ) {
+    return _pgp_certificate_revocation_info(
+      cert,
+      out_revoked,
+      out_reason,
+      out_message,
+    );
+  }
+
+  late final _pgp_certificate_revocation_infoPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Uint8>,
+                  ffi.Pointer<ffi.Uint8>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_revocation_info');
+  late final _pgp_certificate_revocation_info =
+      _pgp_certificate_revocation_infoPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Uint8>,
+              ffi.Pointer<ffi.Uint8>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
   /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
   ///
   /// # Safety
