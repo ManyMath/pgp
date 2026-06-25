@@ -44,6 +44,43 @@ int main(void) {
   pgp_certificate_free(cert);
   cert = updated;
 
+  char *alice_fp = NULL;
+  rc = pgp_certificate_fingerprint(alice, &alice_fp);
+  if (rc != 0 || alice_fp == NULL) {
+    fprintf(stderr, "pgp_certificate_fingerprint (alice) failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+
+  char *certifications = NULL;
+  rc = pgp_certificate_userid_certifications(cert, "other@example.org",
+                                              &certifications);
+  if (rc != 0 || certifications == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_userid_certifications failed: rc=%" PRId32 "\n",
+            rc);
+    free(alice_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+  if (strstr(certifications, alice_fp) == NULL ||
+      strstr(certifications, "\t0") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_userid_certifications did not report alice as "
+            "an unrevoked certifier: %s\n",
+            certifications);
+    free(certifications);
+    free(alice_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+  free(certifications);
+
   updated = NULL;
   rc = pgp_certificate_revoke_userid_certification(
       alice, cert, "other@example.org", 2, "signing key compromised",
@@ -53,13 +90,42 @@ int main(void) {
             "pgp_certificate_revoke_userid_certification failed: rc=%" PRId32
             "\n",
             rc);
+    free(alice_fp);
     pgp_certificate_free(cert);
     pgp_certificate_free(alice);
     return 1;
   }
   pgp_certificate_free(cert);
-  pgp_certificate_free(alice);
   cert = updated;
+
+  certifications = NULL;
+  rc = pgp_certificate_userid_certifications(cert, "other@example.org",
+                                              &certifications);
+  if (rc != 0 || certifications == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_userid_certifications (post-revoke) failed: "
+            "rc=%" PRId32 "\n",
+            rc);
+    free(alice_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+  if (strstr(certifications, alice_fp) == NULL ||
+      strstr(certifications, "\t1") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_userid_certifications did not report alice's "
+            "certification as revoked: %s\n",
+            certifications);
+    free(certifications);
+    free(alice_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+  free(certifications);
+  free(alice_fp);
+  pgp_certificate_free(alice);
 
   updated = NULL;
   rc = pgp_certificate_add_transport_encryption_subkey(cert, &updated);

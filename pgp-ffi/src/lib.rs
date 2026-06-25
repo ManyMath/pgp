@@ -1347,6 +1347,71 @@ pub unsafe extern "C" fn pgp_certificate_userids_info(
     write_c_string(&joined, out)
 }
 
+/// Return one line per distinct third-party certifier of `user_id`:
+/// `issuer_fingerprint\trevoked`, where `issuer_fingerprint` is the
+/// certifying key's fingerprint (from `pgp_certificate_certify_userid`) and
+/// `revoked` is `1` if that certifier has since revoked their certification
+/// via `pgp_certificate_revoke_userid_certification` (`0` otherwise).
+/// `pgp_certificate_userids_info` only reports self-signature state
+/// (primary/revoked/expiry); this is the third-party-certification
+/// counterpart. Reports what's attached to the certificate as-is: it does
+/// not cryptographically re-verify each signature against the issuer's key
+/// (the issuer's certificate isn't available here), matching the trust
+/// model of every other inspection function in this module. Returns
+/// NotFound if `user_id` is not present on `cert`.
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `cert`, `user_id`, and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_userid_certifications(
+    cert: *const Certificate,
+    user_id: *const libc::c_char,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || user_id.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+
+    let user_id_str = match CStr::from_ptr(user_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let ua = match sequoia_cert
+        .userids()
+        .find(|ua| ua.userid().value() == user_id_str.as_bytes())
+    {
+        Some(ua) => ua,
+        None => return FFIError::NotFound as i32,
+    };
+
+    let revoked_fingerprints: std::collections::HashSet<String> = ua
+        .other_revocations2()
+        .flat_map(|sig| sig.issuer_fingerprints().map(|fp| fp.to_hex()))
+        .collect();
+
+    let mut seen = std::collections::HashSet::new();
+    let mut lines = Vec::new();
+    for sig in ua.certifications() {
+        for fp in sig.issuer_fingerprints() {
+            let fp_hex = fp.to_hex();
+            if seen.insert(fp_hex.clone()) {
+                let revoked = revoked_fingerprints.contains(&fp_hex);
+                lines.push(format!("{}\t{}", fp_hex, revoked as u8));
+            }
+        }
+    }
+    let joined = lines.join("\n");
+    write_c_string(&joined, out)
+}
+
 /// Return one line per subkey:
 /// `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
 /// comma-separated list of capabilities (`encryption`, `signing`), `revoked`
@@ -4570,6 +4635,144 @@ mod tests {
             );
             assert_eq!(
                 pgp_certificate_lock(cert, passphrase.as_ptr(), ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn userid_certifications_reports_certifier_and_revocation_state() {
+        unsafe {
+            let alice = generate_cert("alice-certifier@example.org");
+            let bob = generate_cert("bob-certified@example.org");
+            let user_id = CString::new("bob-certified@example.org").unwrap();
+
+            let mut alice_fp: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_fingerprint(alice, &mut alice_fp),
+                FFIError::Ok as i32
+            );
+            let alice_fp = to_owned_c_string(alice_fp);
+
+            let mut certified: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), &mut certified),
+                FFIError::Ok as i32
+            );
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userid_certifications(
+                    certified,
+                    user_id.as_ptr(),
+                    &mut listing
+                ),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let lines: Vec<&str> = listing_str.lines().collect();
+            assert_eq!(lines.len(), 1);
+            let fields: Vec<&str> = lines[0].split('\t').collect();
+            assert_eq!(fields[0], alice_fp);
+            assert_eq!(fields[1], "0"); // not yet revoked
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    alice,
+                    certified,
+                    user_id.as_ptr(),
+                    0,
+                    ptr::null(),
+                    &mut revoked
+                ),
+                FFIError::Ok as i32
+            );
+
+            let mut listing_after: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userid_certifications(
+                    revoked,
+                    user_id.as_ptr(),
+                    &mut listing_after
+                ),
+                FFIError::Ok as i32
+            );
+            let listing_after_str = to_owned_c_string(listing_after);
+            let fields_after: Vec<&str> =
+                listing_after_str.lines().next().unwrap().split('\t').collect();
+            assert_eq!(fields_after[0], alice_fp);
+            assert_eq!(fields_after[1], "1"); // now revoked
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(certified);
+            pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn userid_certifications_is_empty_for_uncertified_userid() {
+        unsafe {
+            let cert = generate_cert("uncertified@example.org");
+            let user_id = CString::new("uncertified@example.org").unwrap();
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userid_certifications(cert, user_id.as_ptr(), &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            assert!(listing_str.is_empty());
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn userid_certifications_rejects_missing_user_id() {
+        unsafe {
+            let cert = generate_cert("missing-userid@example.org");
+            let user_id = CString::new("nobody@example.org").unwrap();
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userid_certifications(cert, user_id.as_ptr(), &mut listing),
+                FFIError::NotFound as i32
+            );
+            assert!(listing.is_null());
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn userid_certifications_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("certifications-null@example.org");
+            let user_id = CString::new("certifications-null@example.org").unwrap();
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_userid_certifications(
+                    ptr::null(),
+                    user_id.as_ptr(),
+                    &mut listing
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_userid_certifications(cert, ptr::null(), &mut listing),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_userid_certifications(
+                    cert,
+                    user_id.as_ptr(),
+                    ptr::null_mut()
+                ),
                 FFIError::Null as i32
             );
 
