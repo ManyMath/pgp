@@ -64,6 +64,82 @@ enum CipherSuite {
   final int code;
 }
 
+/// RFC 4880 symmetric-cipher codes, for use with
+/// [Certificate.setPreferences]' `symmetricAlgorithms` list and as read back
+/// from [Certificate.preferences].
+enum SymmetricAlgorithmPreference {
+  tripleDes(2),
+  cast5(3),
+  blowfish(4),
+  aes128(7),
+  aes192(8),
+  aes256(9),
+  twofish(10),
+  camellia128(11),
+  camellia192(12),
+  camellia256(13);
+
+  const SymmetricAlgorithmPreference(this.code);
+
+  /// The RFC 4880 wire-format algorithm code.
+  final int code;
+}
+
+/// RFC 4880 hash-algorithm codes, for use with [Certificate.setPreferences]'
+/// `hashAlgorithms` list and as read back from [Certificate.preferences].
+enum HashAlgorithmPreference {
+  sha1(2),
+  sha256(8),
+  sha384(9),
+  sha512(10),
+  sha224(11);
+
+  const HashAlgorithmPreference(this.code);
+
+  /// The RFC 4880 wire-format algorithm code.
+  final int code;
+}
+
+/// RFC 4880 compression-algorithm codes, for use with
+/// [Certificate.setPreferences]' `compressionAlgorithms` list and as read
+/// back from [Certificate.preferences].
+enum CompressionAlgorithmPreference {
+  uncompressed(0),
+  zip(1),
+  zlib(2),
+  bzip2(3);
+
+  const CompressionAlgorithmPreference(this.code);
+
+  /// The RFC 4880 wire-format algorithm code.
+  final int code;
+}
+
+/// A certificate's algorithm-preference and features self-signature
+/// subpackets, as set by [Certificate.setPreferences] and read back by
+/// [Certificate.preferences].
+class CertificatePreferences {
+  /// Preferred symmetric algorithms, most preferred first.
+  final List<int> symmetricAlgorithms;
+
+  /// Preferred hash algorithms, most preferred first.
+  final List<int> hashAlgorithms;
+
+  /// Preferred compression algorithms, most preferred first.
+  final List<int> compressionAlgorithms;
+
+  /// The raw RFC 4880 Features subpacket first octet (bit 0 = SEIPDv1,
+  /// bit 1 = AEAD, bit 2 = SEIPDv2), or 0 if absent.
+  final int features;
+
+  const CertificatePreferences({
+    required this.symmetricAlgorithms,
+    required this.hashAlgorithms,
+    required this.compressionAlgorithms,
+    required this.features,
+  });
+}
+
 /// A snapshot of certificate metadata returned by [Certificate.info].
 class CertificateInfo {
   /// 40-character uppercase hex fingerprint (v4 key).
@@ -669,6 +745,82 @@ class Certificate {
       if (code == -4) return false; // NotFound
       if (code != 0) throw PgpException(code);
       return out.value == 1;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Sets this certificate's algorithm-preference and features
+  /// self-signature subpackets (RFC 4880), returning the updated certificate;
+  /// the receiver is unchanged. These tell other implementations which
+  /// symmetric/hash/compression algorithms this certificate supports when
+  /// they encrypt or sign for it, and which optional OpenPGP features (e.g.
+  /// SEIPDv2/AEAD) it understands. Each algorithm list may be empty (which
+  /// records an empty preference list, distinct from the subpacket being
+  /// absent entirely). `features` is the raw first octet of the RFC 4880
+  /// Features subpacket (bit 0 = SEIPDv1, bit 1 = AEAD, bit 2 = SEIPDv2);
+  /// defaults to 0.
+  ///
+  /// Throws [PgpException] if this certificate's certification-capable
+  /// secret key isn't available.
+  Certificate setPreferences({
+    List<int> symmetricAlgorithms = const [],
+    List<int> hashAlgorithms = const [],
+    List<int> compressionAlgorithms = const [],
+    int features = 0,
+  }) {
+    final symPtr = calloc<Uint8>(
+        symmetricAlgorithms.length.clamp(1, symmetricAlgorithms.length + 1));
+    final hashPtr = calloc<Uint8>(
+        hashAlgorithms.length.clamp(1, hashAlgorithms.length + 1));
+    final compPtr = calloc<Uint8>(compressionAlgorithms.length
+        .clamp(1, compressionAlgorithms.length + 1));
+    try {
+      for (var i = 0; i < symmetricAlgorithms.length; i++) {
+        symPtr[i] = symmetricAlgorithms[i];
+      }
+      for (var i = 0; i < hashAlgorithms.length; i++) {
+        hashPtr[i] = hashAlgorithms[i];
+      }
+      for (var i = 0; i < compressionAlgorithms.length; i++) {
+        compPtr[i] = compressionAlgorithms[i];
+      }
+      return _derive((out) => _bindings.pgp_certificate_set_preferences(
+          _ptr,
+          symPtr,
+          symmetricAlgorithms.length,
+          hashPtr,
+          hashAlgorithms.length,
+          compPtr,
+          compressionAlgorithms.length,
+          features,
+          out));
+    } finally {
+      calloc.free(symPtr);
+      calloc.free(hashPtr);
+      calloc.free(compPtr);
+    }
+  }
+
+  /// Reads back this certificate's algorithm-preference and features
+  /// subpackets (as set by [setPreferences], or Sequoia's own defaults if
+  /// that has never been called).
+  CertificatePreferences preferences() {
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_preferences(_ptr, out);
+      if (code != 0) throw PgpException(code);
+      final raw = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      final fields = raw.split('\t');
+      List<int> parseCsv(String s) =>
+          s.isEmpty ? [] : s.split(',').map(int.parse).toList();
+      return CertificatePreferences(
+        symmetricAlgorithms: parseCsv(fields[0]),
+        hashAlgorithms: parseCsv(fields[1]),
+        compressionAlgorithms: parseCsv(fields[2]),
+        features: int.parse(fields[3]),
+      );
     } finally {
       calloc.free(out);
     }

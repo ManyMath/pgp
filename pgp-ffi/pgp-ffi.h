@@ -359,6 +359,62 @@ int32_t pgp_certificate_verify_designated_revocation(const struct Certificate *t
                                                      uint8_t *out_verified);
 
 /**
+ * Set `cert`'s algorithm-preference and features self-signature subpackets
+ * (RFC 4880 5.2.3.7-9/17), writing the updated cert to `*new_cert`; `cert`
+ * itself is left unmodified. These tell other implementations which
+ * symmetric/hash/compression algorithms `cert` supports when they encrypt
+ * or sign for it, and which optional OpenPGP features (e.g. SEIPDv2/AEAD)
+ * it understands: this crate's own `pgp_key_generate*` functions rely on
+ * Sequoia's own defaults for these subpackets, so this is the first way to
+ * override them. `sym_algos`/`hash_algos`/`compression_algos` are each a
+ * pointer to `*_len` raw one-byte RFC 4880 algorithm codes (Sequoia's
+ * `SymmetricAlgorithm`/`HashAlgorithm`/`CompressionAlgorithm` numbering); a
+ * zero length is valid and records an empty preference list (distinct from
+ * the subpacket being absent). `features` is the raw first octet of the
+ * Features subpacket (bit 0 = SEIPDv1, bit 1 = AEAD, bit 2 = SEIPDv2, per
+ * Sequoia's `Features` bitfield). All four are set together as one refreshed
+ * direct-key self-signature, following the same "template the existing
+ * direct-key signature, add subpackets, re-sign" technique as
+ * `pgp_certificate_add_designated_revoker`. Returns `Failed` if `cert` has
+ * no direct-key signature to template from: every certificate produced by
+ * this library's own `pgp_key_generate*` functions has one. `cert`'s
+ * certification-capable secret key material must be present and unencrypted.
+ * Caller must free `*new_cert` with `pgp_certificate_free`.
+ *
+ * # Safety
+ * `cert` and `new_cert` must be non-null. `sym_algos`/`hash_algos`/
+ * `compression_algos` must each be non-null with at least `*_len` valid
+ * bytes, unless the corresponding length is `0`.
+ */
+int32_t pgp_certificate_set_preferences(const struct Certificate *cert,
+                                        const uint8_t *sym_algos,
+                                        uintptr_t sym_algos_len,
+                                        const uint8_t *hash_algos,
+                                        uintptr_t hash_algos_len,
+                                        const uint8_t *compression_algos,
+                                        uintptr_t compression_algos_len,
+                                        uint8_t features,
+                                        struct Certificate **new_cert);
+
+/**
+ * Read back `cert`'s algorithm-preference and features subpackets (as set by
+ * `pgp_certificate_set_preferences`, or Sequoia's own defaults from
+ * `pgp_key_generate*` if that has never been called): one line,
+ * `sym_algos_csv\thash_algos_csv\tcompression_algos_csv\tfeatures`, where
+ * each `*_csv` is a comma-separated list of raw one-byte algorithm codes
+ * (empty string if the subpacket is absent or its list is empty) and
+ * `features` is the raw Features-subpacket first octet (`0` if absent).
+ * Reads from `cert`'s current direct-key signature, so needs no policy
+ * decisions beyond validity (same policy/`None`-reference-time convention as
+ * every other inspection function in this module).
+ * Caller must free `*out` with `free()`.
+ *
+ * # Safety
+ * `cert` and `out` must be non-null.
+ */
+int32_t pgp_certificate_preferences(const struct Certificate *cert, char **out);
+
+/**
  * Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
  *
  * # Safety

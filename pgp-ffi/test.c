@@ -808,6 +808,36 @@ int main(void) {
   free(session_key_plaintext);
   pgp_certificate_free(session_key_cert);
 
+  uint8_t pref_sym[2] = {9, 7};   /* AES256, AES128 */
+  uint8_t pref_hash[2] = {8, 2};  /* SHA256, SHA1 */
+  uint8_t pref_comp[1] = {2};     /* ZLIB */
+  struct Certificate *cert_with_prefs = NULL;
+  rc = pgp_certificate_set_preferences(cert, pref_sym, 2, pref_hash, 2,
+                                        pref_comp, 1, /* features */ 1,
+                                        &cert_with_prefs);
+  if (rc != 0 || cert_with_prefs == NULL) {
+    fprintf(stderr, "pgp_certificate_set_preferences failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  char *preferences = NULL;
+  rc = pgp_certificate_preferences(cert_with_prefs, &preferences);
+  if (rc != 0 || preferences == NULL ||
+      strcmp(preferences, "9,7\t8,2\t2\t1") != 0) {
+    fprintf(stderr,
+            "pgp_certificate_preferences failed: rc=%" PRId32
+            " preferences=%s\n",
+            rc, preferences ? preferences : "(null)");
+    free(preferences);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(cert_with_prefs);
+    return 1;
+  }
+  free(preferences);
+  pgp_certificate_free(cert_with_prefs);
+
   char *armored = NULL;
   rc = pgp_certificate_export_armored(cert, &armored);
   if (rc != 0 || armored == NULL) {

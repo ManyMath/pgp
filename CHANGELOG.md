@@ -1,5 +1,16 @@
 ## Unreleased
 
+- Added `Certificate.setPreferences({symmetricAlgorithms, hashAlgorithms,
+  compressionAlgorithms, features})` and `Certificate.preferences()`,
+  exposing the RFC 4880 algorithm-preference and Features self-signature
+  subpackets that tell other OpenPGP implementations which
+  symmetric/hash/compression algorithms and optional features (e.g.
+  SEIPDv2/AEAD) a certificate supports. Previously these subpackets were
+  never touched, leaving certificates at Sequoia's own defaults with no way
+  to override or inspect them. New `SymmetricAlgorithmPreference`,
+  `HashAlgorithmPreference`, and `CompressionAlgorithmPreference` enums carry
+  the relevant RFC 4880 wire-format codes.
+
 - Added `Certificate.certifyUserIdExportable(target, userId, {exportable})`,
   GnuPG's `--lsign-key` "local certification" concept: a certification with
   `exportable: false` is fully present and inspectable in memory but is

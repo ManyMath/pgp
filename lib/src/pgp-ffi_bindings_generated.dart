@@ -747,6 +747,116 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Uint8>)>();
 
+  /// Set `cert`'s algorithm-preference and features self-signature subpackets
+  /// (RFC 4880 5.2.3.7-9/17), writing the updated cert to `*new_cert`; `cert`
+  /// itself is left unmodified. These tell other implementations which
+  /// symmetric/hash/compression algorithms `cert` supports when they encrypt
+  /// or sign for it, and which optional OpenPGP features (e.g. SEIPDv2/AEAD)
+  /// it understands: this crate's own `pgp_key_generate*` functions rely on
+  /// Sequoia's own defaults for these subpackets, so this is the first way to
+  /// override them. `sym_algos`/`hash_algos`/`compression_algos` are each a
+  /// pointer to `*_len` raw one-byte RFC 4880 algorithm codes (Sequoia's
+  /// `SymmetricAlgorithm`/`HashAlgorithm`/`CompressionAlgorithm` numbering); a
+  /// zero length is valid and records an empty preference list (distinct from
+  /// the subpacket being absent). `features` is the raw first octet of the
+  /// Features subpacket (bit 0 = SEIPDv1, bit 1 = AEAD, bit 2 = SEIPDv2, per
+  /// Sequoia's `Features` bitfield). All four are set together as one refreshed
+  /// direct-key self-signature, following the same "template the existing
+  /// direct-key signature, add subpackets, re-sign" technique as
+  /// `pgp_certificate_add_designated_revoker`. Returns `Failed` if `cert` has
+  /// no direct-key signature to template from: every certificate produced by
+  /// this library's own `pgp_key_generate*` functions has one. `cert`'s
+  /// certification-capable secret key material must be present and unencrypted.
+  /// Caller must free `*new_cert` with `pgp_certificate_free`.
+  ///
+  /// # Safety
+  /// `cert` and `new_cert` must be non-null. `sym_algos`/`hash_algos`/
+  /// `compression_algos` must each be non-null with at least `*_len` valid
+  /// bytes, unless the corresponding length is `0`.
+  int pgp_certificate_set_preferences(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Uint8> sym_algos,
+    int sym_algos_len,
+    ffi.Pointer<ffi.Uint8> hash_algos,
+    int hash_algos_len,
+    ffi.Pointer<ffi.Uint8> compression_algos,
+    int compression_algos_len,
+    int features,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_set_preferences(
+      cert,
+      sym_algos,
+      sym_algos_len,
+      hash_algos,
+      hash_algos_len,
+      compression_algos,
+      compression_algos_len,
+      features,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_set_preferencesPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Uint8>,
+                  ffi.UintPtr,
+                  ffi.Pointer<ffi.Uint8>,
+                  ffi.UintPtr,
+                  ffi.Pointer<ffi.Uint8>,
+                  ffi.UintPtr,
+                  ffi.Uint8,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_set_preferences');
+  late final _pgp_certificate_set_preferences =
+      _pgp_certificate_set_preferencesPtr.asFunction<
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Uint8>,
+              int,
+              ffi.Pointer<ffi.Uint8>,
+              int,
+              ffi.Pointer<ffi.Uint8>,
+              int,
+              int,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
+  /// Read back `cert`'s algorithm-preference and features subpackets (as set by
+  /// `pgp_certificate_set_preferences`, or Sequoia's own defaults from
+  /// `pgp_key_generate*` if that has never been called): one line,
+  /// `sym_algos_csv\thash_algos_csv\tcompression_algos_csv\tfeatures`, where
+  /// each `*_csv` is a comma-separated list of raw one-byte algorithm codes
+  /// (empty string if the subpacket is absent or its list is empty) and
+  /// `features` is the raw Features-subpacket first octet (`0` if absent).
+  /// Reads from `cert`'s current direct-key signature, so needs no policy
+  /// decisions beyond validity (same policy/`None`-reference-time convention as
+  /// every other inspection function in this module).
+  /// Caller must free `*out` with `free()`.
+  ///
+  /// # Safety
+  /// `cert` and `out` must be non-null.
+  int pgp_certificate_preferences(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> out,
+  ) {
+    return _pgp_certificate_preferences(
+      cert,
+      out,
+    );
+  }
+
+  late final _pgp_certificate_preferencesPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_preferences');
+  late final _pgp_certificate_preferences =
+      _pgp_certificate_preferencesPtr.asFunction<
+          int Function(
+              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
   /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
   ///
   /// # Safety

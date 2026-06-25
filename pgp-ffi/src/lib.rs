@@ -14,7 +14,10 @@ use sequoia_openpgp::{
     policy::{Policy, StandardPolicy},
     serialize::stream::{Armorer, Encryptor, LiteralWriter, Message, Signer},
     serialize::Serialize,
-    types::{KeyFlags, ReasonForRevocation, RevocationKey, RevocationStatus, SymmetricAlgorithm},
+    types::{
+        CompressionAlgorithm, Features, HashAlgorithm, KeyFlags, ReasonForRevocation,
+        RevocationKey, RevocationStatus, SymmetricAlgorithm,
+    },
     KeyHandle, Result,
 };
 use std::ffi::CStr;
@@ -1469,6 +1472,204 @@ pub unsafe extern "C" fn pgp_certificate_verify_designated_revocation(
         .is_ok();
     *out_verified = verified as u8;
     FFIError::Ok as i32
+}
+
+/// Set `cert`'s algorithm-preference and features self-signature subpackets
+/// (RFC 4880 5.2.3.7-9/17), writing the updated cert to `*new_cert`; `cert`
+/// itself is left unmodified. These tell other implementations which
+/// symmetric/hash/compression algorithms `cert` supports when they encrypt
+/// or sign for it, and which optional OpenPGP features (e.g. SEIPDv2/AEAD)
+/// it understands: this crate's own `pgp_key_generate*` functions rely on
+/// Sequoia's own defaults for these subpackets, so this is the first way to
+/// override them. `sym_algos`/`hash_algos`/`compression_algos` are each a
+/// pointer to `*_len` raw one-byte RFC 4880 algorithm codes (Sequoia's
+/// `SymmetricAlgorithm`/`HashAlgorithm`/`CompressionAlgorithm` numbering); a
+/// zero length is valid and records an empty preference list (distinct from
+/// the subpacket being absent). `features` is the raw first octet of the
+/// Features subpacket (bit 0 = SEIPDv1, bit 1 = AEAD, bit 2 = SEIPDv2, per
+/// Sequoia's `Features` bitfield). All four are set together as one refreshed
+/// direct-key self-signature, following the same "template the existing
+/// direct-key signature, add subpackets, re-sign" technique as
+/// `pgp_certificate_add_designated_revoker`. Returns `Failed` if `cert` has
+/// no direct-key signature to template from: every certificate produced by
+/// this library's own `pgp_key_generate*` functions has one. `cert`'s
+/// certification-capable secret key material must be present and unencrypted.
+/// Caller must free `*new_cert` with `pgp_certificate_free`.
+///
+/// # Safety
+/// `cert` and `new_cert` must be non-null. `sym_algos`/`hash_algos`/
+/// `compression_algos` must each be non-null with at least `*_len` valid
+/// bytes, unless the corresponding length is `0`.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_set_preferences(
+    cert: *const Certificate,
+    sym_algos: *const u8,
+    sym_algos_len: usize,
+    hash_algos: *const u8,
+    hash_algos_len: usize,
+    compression_algos: *const u8,
+    compression_algos_len: usize,
+    features: u8,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    if (sym_algos.is_null() && sym_algos_len > 0)
+        || (hash_algos.is_null() && hash_algos_len > 0)
+        || (compression_algos.is_null() && compression_algos_len > 0)
+    {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+
+    let raw_slice = |ptr: *const u8, len: usize| -> &[u8] {
+        if len == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(ptr, len)
+        }
+    };
+    let sym_prefs: Vec<SymmetricAlgorithm> = raw_slice(sym_algos, sym_algos_len)
+        .iter()
+        .map(|&b| SymmetricAlgorithm::from(b))
+        .collect();
+    let hash_prefs: Vec<HashAlgorithm> = raw_slice(hash_algos, hash_algos_len)
+        .iter()
+        .map(|&b| HashAlgorithm::from(b))
+        .collect();
+    let compression_prefs: Vec<CompressionAlgorithm> = raw_slice(compression_algos, compression_algos_len)
+        .iter()
+        .map(|&b| CompressionAlgorithm::from(b))
+        .collect();
+
+    let policy = StandardPolicy::new();
+    let vc = match sequoia_cert.with_policy(&policy, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let template: sequoia_openpgp::packet::signature::SignatureBuilder =
+        match vc.direct_key_signature() {
+            Ok(sig) => sig.clone().into(),
+            Err(_) => return FFIError::Failed as i32,
+        };
+
+    let mut signer = match sequoia_cert.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig = match template
+        .set_signature_creation_time(SystemTime::now())
+        .and_then(|b| b.set_preferred_symmetric_algorithms(sym_prefs))
+        .and_then(|b| b.set_preferred_hash_algorithms(hash_prefs))
+        .and_then(|b| b.set_preferred_compression_algorithms(compression_prefs))
+        .and_then(|b| b.set_features(Features::new([features])))
+    {
+        Ok(b) => match b.sign_direct_key(&mut signer, None) {
+            Ok(s) => s,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match sequoia_cert.insert_packets(sig) {
+        Ok((c, _)) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
+/// Read back `cert`'s algorithm-preference and features subpackets (as set by
+/// `pgp_certificate_set_preferences`, or Sequoia's own defaults from
+/// `pgp_key_generate*` if that has never been called): one line,
+/// `sym_algos_csv\thash_algos_csv\tcompression_algos_csv\tfeatures`, where
+/// each `*_csv` is a comma-separated list of raw one-byte algorithm codes
+/// (empty string if the subpacket is absent or its list is empty) and
+/// `features` is the raw Features-subpacket first octet (`0` if absent).
+/// Reads from `cert`'s current direct-key signature, so needs no policy
+/// decisions beyond validity (same policy/`None`-reference-time convention as
+/// every other inspection function in this module).
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `cert` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_preferences(
+    cert: *const Certificate,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+    let policy = StandardPolicy::new();
+
+    let vc = match sequoia_cert.with_policy(&policy, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let sig = match vc.direct_key_signature() {
+        Ok(sig) => sig,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let sym_csv = sig
+        .preferred_symmetric_algorithms()
+        .map(|algos| {
+            algos
+                .iter()
+                .map(|a| u8::from(*a).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let hash_csv = sig
+        .preferred_hash_algorithms()
+        .map(|algos| {
+            algos
+                .iter()
+                .map(|a| u8::from(*a).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let compression_csv = sig
+        .preferred_compression_algorithms()
+        .map(|algos| {
+            algos
+                .iter()
+                .map(|a| u8::from(*a).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let features = sig
+        .features()
+        .map(|f| f.as_bitfield().as_bytes().first().copied().unwrap_or(0))
+        .unwrap_or(0);
+
+    write_c_string(
+        &format!("{}\t{}\t{}\t{}", sym_csv, hash_csv, compression_csv, features),
+        out,
+    )
 }
 
 /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
@@ -8052,6 +8253,160 @@ mod tests {
 
             pgp_certificate_free(alice);
             pgp_certificate_free(bob);
+        }
+    }
+
+    // --- algorithm preferences ---
+
+    #[test]
+    fn set_preferences_round_trips_algorithms_and_features() {
+        unsafe {
+            let cert = generate_cert("preferences-round-trip@example.org");
+
+            // Sequoia's `CertBuilder` sets its own default preferences; snapshot
+            // them so we can confirm the source cert is untouched below without
+            // hardcoding those defaults.
+            let mut before: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_preferences(cert, &mut before), FFIError::Ok as i32);
+            let before = to_owned_c_string(before);
+
+            let sym: [u8; 2] = [9, 7]; // AES256, AES128
+            let hash: [u8; 2] = [8, 2]; // SHA256, SHA1
+            let compression: [u8; 1] = [2]; // ZLIB
+            let features: u8 = 0b0000_0001; // SEIPDv1
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_preferences(
+                    cert,
+                    sym.as_ptr(),
+                    sym.len(),
+                    hash.as_ptr(),
+                    hash.len(),
+                    compression.as_ptr(),
+                    compression.len(),
+                    features,
+                    &mut updated,
+                ),
+                FFIError::Ok as i32
+            );
+            assert!(!updated.is_null());
+
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_preferences(updated, &mut out), FFIError::Ok as i32);
+            assert_eq!(to_owned_c_string(out), "9,7\t8,2\t2\t1");
+
+            // The source cert must be untouched.
+            let mut source_out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_preferences(cert, &mut source_out), FFIError::Ok as i32);
+            assert_eq!(to_owned_c_string(source_out), before);
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn set_preferences_allows_empty_lists() {
+        unsafe {
+            let cert = generate_cert("preferences-empty@example.org");
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_preferences(
+                    cert,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
+                    0,
+                    &mut updated,
+                ),
+                FFIError::Ok as i32
+            );
+            assert!(!updated.is_null());
+
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_preferences(updated, &mut out), FFIError::Ok as i32);
+            assert_eq!(to_owned_c_string(out), "\t\t\t0");
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn set_preferences_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("preferences-null@example.org");
+            let sym: [u8; 1] = [9];
+            let mut updated: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_set_preferences(
+                    ptr::null(),
+                    sym.as_ptr(),
+                    sym.len(),
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
+                    0,
+                    &mut updated,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_set_preferences(
+                    cert,
+                    sym.as_ptr(),
+                    sym.len(),
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
+                    0,
+                    ptr::null_mut(),
+                ),
+                FFIError::Null as i32
+            );
+            // Non-null length with a null pointer is rejected.
+            assert_eq!(
+                pgp_certificate_set_preferences(
+                    cert,
+                    ptr::null(),
+                    2,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
+                    0,
+                    &mut updated,
+                ),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn preferences_rejects_null_args() {
+        unsafe {
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_preferences(ptr::null(), &mut out),
+                FFIError::Null as i32
+            );
+
+            let cert = generate_cert("preferences-read-null@example.org");
+            assert_eq!(
+                pgp_certificate_preferences(cert, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+            pgp_certificate_free(cert);
         }
     }
 }

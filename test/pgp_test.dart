@@ -1547,4 +1547,64 @@ void main() {
       eve.dispose();
     });
   });
+
+  group('algorithm preferences', () {
+    test('setPreferences round-trips through preferences()', () {
+      final cert = pgp.generateKey('preferences@example.org');
+
+      final updated = cert.setPreferences(
+        symmetricAlgorithms: [
+          SymmetricAlgorithmPreference.aes256.code,
+          SymmetricAlgorithmPreference.aes128.code,
+        ],
+        hashAlgorithms: [
+          HashAlgorithmPreference.sha256.code,
+          HashAlgorithmPreference.sha1.code,
+        ],
+        compressionAlgorithms: [CompressionAlgorithmPreference.zlib.code],
+        features: 1,
+      );
+
+      final prefs = updated.preferences();
+      expect(prefs.symmetricAlgorithms, [9, 7]);
+      expect(prefs.hashAlgorithms, [8, 2]);
+      expect(prefs.compressionAlgorithms, [2]);
+      expect(prefs.features, 1);
+
+      cert.dispose();
+      updated.dispose();
+    });
+
+    test('setPreferences leaves the receiver unchanged', () {
+      final cert = pgp.generateKey('preferences-unchanged@example.org');
+      final before = cert.preferences();
+
+      final updated = cert.setPreferences(
+        symmetricAlgorithms: [SymmetricAlgorithmPreference.aes256.code],
+      );
+
+      final after = cert.preferences();
+      expect(after.symmetricAlgorithms, before.symmetricAlgorithms);
+      expect(after.hashAlgorithms, before.hashAlgorithms);
+      expect(after.compressionAlgorithms, before.compressionAlgorithms);
+      expect(after.features, before.features);
+
+      cert.dispose();
+      updated.dispose();
+    });
+
+    test('setPreferences allows clearing to empty lists', () {
+      final cert = pgp.generateKey('preferences-empty@example.org');
+
+      final updated = cert.setPreferences();
+      final prefs = updated.preferences();
+      expect(prefs.symmetricAlgorithms, isEmpty);
+      expect(prefs.hashAlgorithms, isEmpty);
+      expect(prefs.compressionAlgorithms, isEmpty);
+      expect(prefs.features, 0);
+
+      cert.dispose();
+      updated.dispose();
+    });
+  });
 }
