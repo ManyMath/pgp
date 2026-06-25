@@ -540,6 +540,64 @@ void main() {
       bob.dispose();
     });
 
+    test(
+        'certifyUserIdExportable(false) survives in memory but is dropped by '
+        'exportPublicArmored', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserIdExportable(
+        bob,
+        'bob@example.org',
+        exportable: false,
+      );
+
+      final certifications = certified.userIdCertifications('bob@example.org');
+      expect(certifications, hasLength(1));
+      expect(certifications.first.isExportable, isFalse);
+
+      final reimported =
+          pgp.certificateFromArmored(certified.exportPublicArmored());
+      expect(reimported.userIdCertifications('bob@example.org'), isEmpty);
+
+      reimported.dispose();
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('certifyUserIdExportable(true) survives exportPublicArmored', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserIdExportable(
+        bob,
+        'bob@example.org',
+        exportable: true,
+      );
+
+      final reimported =
+          pgp.certificateFromArmored(certified.exportPublicArmored());
+      final certifications =
+          reimported.userIdCertifications('bob@example.org');
+      expect(certifications, hasLength(1));
+      expect(certifications.first.isExportable, isTrue);
+
+      reimported.dispose();
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('certifyUserId (plain) records exportable as true', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      final certifications = certified.userIdCertifications('bob@example.org');
+      expect(certifications.first.isExportable, isTrue);
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
     test('userIdCertifications is empty for an uncertified user ID', () {
       final cert = pgp.generateKey('someone@example.org');
       expect(cert.userIdCertifications('someone@example.org'), isEmpty);

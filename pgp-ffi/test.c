@@ -182,6 +182,128 @@ int main(void) {
   pgp_certificate_free(introducer);
   pgp_certificate_free(trust_certified);
 
+  struct Certificate *local_certifier = NULL;
+  rc = pgp_key_generate("local-certifier@example.org", &local_certifier);
+  if (rc != 0 || local_certifier == NULL) {
+    fprintf(stderr, "pgp_key_generate (local_certifier) failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  char *local_certifier_fp = NULL;
+  rc = pgp_certificate_fingerprint(local_certifier, &local_certifier_fp);
+  if (rc != 0 || local_certifier_fp == NULL) {
+    fprintf(stderr, "pgp_certificate_fingerprint (local_certifier) failed: "
+                     "rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(local_certifier);
+    return 1;
+  }
+
+  struct Certificate *locally_certified = NULL;
+  rc = pgp_certificate_certify_userid_exportable(
+      local_certifier, cert, "other@example.org", 0, &locally_certified);
+  if (rc != 0 || locally_certified == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_certify_userid_exportable failed: rc=%" PRId32
+            "\n",
+            rc);
+    free(local_certifier_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(local_certifier);
+    return 1;
+  }
+
+  char *local_certifications = NULL;
+  rc = pgp_certificate_userid_certifications(
+      locally_certified, "other@example.org", &local_certifications);
+  char *local_certifier_line =
+      local_certifications != NULL
+          ? strstr(local_certifications, local_certifier_fp)
+          : NULL;
+  if (rc != 0 || local_certifications == NULL || local_certifier_line == NULL ||
+      strncmp(local_certifier_line + strlen(local_certifier_fp), "\t0\t0\t0\t0",
+               8) != 0) {
+    fprintf(stderr,
+            "pgp_certificate_certify_userid_exportable did not record a "
+            "non-exportable certification: rc=%" PRId32 " listing=%s\n",
+            rc, local_certifications ? local_certifications : "(null)");
+    free(local_certifications);
+    free(local_certifier_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(local_certifier);
+    pgp_certificate_free(locally_certified);
+    return 1;
+  }
+  free(local_certifications);
+  free(local_certifier_fp);
+
+  char *local_export = NULL;
+  rc = pgp_certificate_export_public_armored(locally_certified, &local_export);
+  if (rc != 0 || local_export == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_export_public_armored (local cert) failed: "
+            "rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(local_certifier);
+    pgp_certificate_free(locally_certified);
+    return 1;
+  }
+
+  struct Certificate *reimported_local = NULL;
+  rc = pgp_certificate_from_armored(local_export, &reimported_local);
+  free(local_export);
+  if (rc != 0 || reimported_local == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_from_armored (local cert re-export) failed: "
+            "rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(local_certifier);
+    pgp_certificate_free(locally_certified);
+    return 1;
+  }
+
+  char *local_certifier_fp_again = NULL;
+  rc = pgp_certificate_fingerprint(local_certifier, &local_certifier_fp_again);
+  if (rc != 0 || local_certifier_fp_again == NULL) {
+    fprintf(stderr, "pgp_certificate_fingerprint (local_certifier, 2nd) "
+                     "failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(local_certifier);
+    pgp_certificate_free(locally_certified);
+    pgp_certificate_free(reimported_local);
+    return 1;
+  }
+
+  char *reimported_certifications = NULL;
+  rc = pgp_certificate_userid_certifications(
+      reimported_local, "other@example.org", &reimported_certifications);
+  if (rc != 0 || reimported_certifications == NULL ||
+      strstr(reimported_certifications, local_certifier_fp_again) != NULL) {
+    fprintf(stderr,
+            "pgp_certificate_export_public_armored did not drop the "
+            "non-exportable certification: rc=%" PRId32 " listing=%s\n",
+            rc, reimported_certifications ? reimported_certifications : "(null)");
+    free(reimported_certifications);
+    free(local_certifier_fp_again);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(local_certifier);
+    pgp_certificate_free(locally_certified);
+    pgp_certificate_free(reimported_local);
+    return 1;
+  }
+  free(reimported_certifications);
+  free(local_certifier_fp_again);
+  pgp_certificate_free(local_certifier);
+  pgp_certificate_free(locally_certified);
+  pgp_certificate_free(reimported_local);
+
   struct Certificate *with_new_uid = NULL;
   rc = pgp_certificate_add_userid(cert, "merged@example.org", &with_new_uid);
   if (rc != 0 || with_new_uid == NULL) {

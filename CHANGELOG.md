@@ -1,5 +1,16 @@
 ## Unreleased
 
+- Added `Certificate.certifyUserIdExportable(target, userId, {exportable})`,
+  GnuPG's `--lsign-key` "local certification" concept: a certification with
+  `exportable: false` is fully present and inspectable in memory but is
+  silently dropped by `exportPublicArmored`, so it never leaks onto a
+  keyserver. **Behavior fix:** `exportPublicArmored` now calls Sequoia's
+  `.export()` instead of `.serialize()`, which is what actually enforces
+  this (and also drops "sensitive" designated-revoker entries per RFC 4880);
+  this has no effect on certificates that don't use either feature.
+  `userIdCertifications` gains an additive `isExportable` field on
+  `CertifierInfo` (always `true` for a plain `certifyUserId` certification).
+
 - Added `Certificate.sessionKey(message)`, recovering a message's symmetric
   session key without decrypting the message body, and the static
   `PGP.decryptWithSessionKey(sessionKeyInfo, message)`, decrypting a message

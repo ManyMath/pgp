@@ -189,11 +189,19 @@ class CertifierInfo {
   /// certification carries no trust signature.
   final int trustAmount;
 
+  /// Whether this certification may be published: `false` for a "local
+  /// certification" made via [Certificate.certifyUserIdExportable] with
+  /// `exportable: false` (GnuPG's `--lsign-key`), which
+  /// [Certificate.exportPublicArmored] silently omits. Always `true` for a
+  /// plain [Certificate.certifyUserId] certification.
+  final bool isExportable;
+
   const CertifierInfo({
     required this.fingerprint,
     required this.isRevoked,
     this.trustDepth = 0,
     this.trustAmount = 0,
+    this.isExportable = true,
   });
 }
 
@@ -835,6 +843,37 @@ class Certificate {
     }
   }
 
+  /// Like [certifyUserId], but records an RFC 4880 Exportable Certification
+  /// subpacket: GnuPG's `--lsign-key` "local certification" concept. When
+  /// [exportable] is `false`, [exportPublicArmored] (the method meant for
+  /// sharing a certificate with others) silently omits this certification
+  /// from its output, while it remains fully present and inspectable (via
+  /// [userIdCertifications]) on the in-memory certificate returned here or
+  /// on one reloaded from [exportSecretArmored]. Useful for vouching for a
+  /// key only within a private, local trust database without that
+  /// endorsement leaking onto a keyserver.
+  ///
+  /// Throws [PgpException] if [userId] isn't present on [target] or if this
+  /// certificate's certification-capable secret key isn't available.
+  Certificate certifyUserIdExportable(
+    Certificate target,
+    String userId, {
+    required bool exportable,
+  }) {
+    final userIdPointer = userId.toNativeUtf8();
+    try {
+      return _derive(
+          (out) => _bindings.pgp_certificate_certify_userid_exportable(
+              _ptr,
+              target._ptr,
+              userIdPointer.cast(),
+              exportable ? 1 : 0,
+              out));
+    } finally {
+      calloc.free(userIdPointer);
+    }
+  }
+
   /// Merges updates from [other] into this certificate: new signatures,
   /// certifications, subkeys, and revocations: returning the combined
   /// certificate. This is the counterpart to importing a refreshed copy of a
@@ -929,6 +968,7 @@ class Certificate {
           isRevoked: fields[1] == '1',
           trustDepth: int.parse(fields[2]),
           trustAmount: int.parse(fields[3]),
+          isExportable: fields[4] == '1',
         );
       }).toList();
     } finally {

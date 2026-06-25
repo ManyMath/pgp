@@ -461,6 +461,33 @@ int32_t pgp_certificate_certify_userid_with_trust(const struct Certificate *sign
                                                   struct Certificate **new_cert);
 
 /**
+ * Like `pgp_certificate_certify_userid`, but attaches an RFC 4880
+ * Exportable Certification subpacket recording whether the certification
+ * may be published: GnuPG's `--lsign-key` "local certification" concept.
+ * When `exportable` is `0`, `pgp_certificate_export_public_armored` (the
+ * entry point meant for sharing a certificate with others) silently omits
+ * this certification from its output, while it remains fully present and
+ * inspectable (via `pgp_certificate_userid_certifications`) on the
+ * in-memory certificate returned here or reloaded from
+ * `pgp_certificate_export_secret_armored`. Useful for vouching for a key
+ * only within a private, local trust database without that endorsement
+ * leaking onto a keyserver. A plain `pgp_certificate_certify_userid`
+ * certification is always exportable (RFC 4880 defaults to exportable when
+ * the subpacket is absent), so existing callers are unaffected. Otherwise
+ * behaves exactly like `pgp_certificate_certify_userid`: writes an updated
+ * copy of `target_cert` to `*new_cert`, which is itself left unmodified.
+ *
+ * # Safety
+ * `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be
+ * non-null.
+ */
+int32_t pgp_certificate_certify_userid_exportable(const struct Certificate *signing_cert,
+                                                  const struct Certificate *target_cert,
+                                                  const char *user_id,
+                                                  uint8_t exportable,
+                                                  struct Certificate **new_cert);
+
+/**
  * Have `signing_cert` revoke its own earlier third-party certification of
  * `user_id` on `target_cert` (the counterpart to
  * `pgp_certificate_certify_userid`), writing the updated copy of
@@ -585,7 +612,10 @@ int32_t pgp_certificate_set_primary_userid(const struct Certificate *cert,
  * `trust_depth`/`trust_amount` are the RFC 4880 Trust Signature subpacket
  * values set via `pgp_certificate_certify_userid_with_trust` (both `0` for
  * a plain `pgp_certificate_certify_userid` certification, which carries no
- * such subpacket). `pgp_certificate_userids_info` only reports
+ * such subpacket). `exportable` is `1` unless the certification was made
+ * via `pgp_certificate_certify_userid_exportable` with `exportable = 0`
+ * (RFC 4880 defaults a certification to exportable when the subpacket is
+ * absent). `pgp_certificate_userids_info` only reports
  * self-signature state (primary/revoked/expiry); this is the
  * third-party-certification counterpart. Reports what's attached to the
  * certificate as-is: it does not cryptographically re-verify each
