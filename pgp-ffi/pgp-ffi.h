@@ -227,11 +227,15 @@ int32_t pgp_certificate_fingerprint(const struct Certificate *cert, char **out);
 int32_t pgp_certificate_userids(const struct Certificate *cert, char **out);
 
 /**
- * Return one line per subkey: `index\tfingerprint\tflags\trevoked`, where
- * `flags` is a comma-separated list of capabilities (`encryption`,
- * `signing`) and `revoked` is `1` if the subkey is revoked, `0` otherwise.
- * `index` matches the zero-based `subkey_index` accepted by
- * `pgp_certificate_revoke_subkey`, so callers no longer need to guess it.
+ * Return one line per subkey:
+ * `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
+ * comma-separated list of capabilities (`encryption`, `signing`), `revoked`
+ * is `1` if the subkey is revoked (`0` otherwise), and `expiry_epoch` is the
+ * subkey's own expiration as seconds since the Unix epoch (`0` if it has no
+ * expiry, independent of the primary key's or other subkeys' expiry: see
+ * `pgp_certificate_set_subkey_expiry`). `index` matches the zero-based
+ * `subkey_index` accepted by `pgp_certificate_revoke_subkey` and
+ * `pgp_certificate_set_subkey_expiry`, so callers no longer need to guess it.
  * Caller must free `*out` with `free()`.
  *
  * # Safety
@@ -326,6 +330,22 @@ int32_t pgp_key_generate_with_expiry(const char *user_id,
 int32_t pgp_certificate_set_expiry(const struct Certificate *cert,
                                    uint64_t validity_seconds,
                                    struct Certificate **new_cert);
+
+/**
+ * Update the expiry on a single subkey (counting subkeys only, same indexing
+ * as `pgp_certificate_revoke_subkey`/`pgp_certificate_subkeys`), leaving the
+ * primary key's and every other subkey's expiry untouched.
+ * `validity_seconds == 0` clears that subkey's expiry. Writes the updated
+ * certificate to `*new_cert`. Caller must free both the original and the
+ * returned certificate separately.
+ *
+ * # Safety
+ * `cert` and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_set_subkey_expiry(const struct Certificate *cert,
+                                          uint32_t subkey_index,
+                                          uint64_t validity_seconds,
+                                          struct Certificate **new_cert);
 
 /**
  * Encrypt `plaintext` to all `count` recipient certificates and sign the

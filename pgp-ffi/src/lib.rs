@@ -1087,11 +1087,15 @@ pub unsafe extern "C" fn pgp_certificate_userids(
     write_c_string(&joined, out)
 }
 
-/// Return one line per subkey: `index\tfingerprint\tflags\trevoked`, where
-/// `flags` is a comma-separated list of capabilities (`encryption`,
-/// `signing`) and `revoked` is `1` if the subkey is revoked, `0` otherwise.
-/// `index` matches the zero-based `subkey_index` accepted by
-/// `pgp_certificate_revoke_subkey`, so callers no longer need to guess it.
+/// Return one line per subkey:
+/// `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
+/// comma-separated list of capabilities (`encryption`, `signing`), `revoked`
+/// is `1` if the subkey is revoked (`0` otherwise), and `expiry_epoch` is the
+/// subkey's own expiration as seconds since the Unix epoch (`0` if it has no
+/// expiry, independent of the primary key's or other subkeys' expiry: see
+/// `pgp_certificate_set_subkey_expiry`). `index` matches the zero-based
+/// `subkey_index` accepted by `pgp_certificate_revoke_subkey` and
+/// `pgp_certificate_set_subkey_expiry`, so callers no longer need to guess it.
 /// Caller must free `*out` with `free()`.
 ///
 /// # Safety
@@ -1123,6 +1127,7 @@ pub unsafe extern "C" fn pgp_certificate_subkeys(
             let fingerprint = ka.key().fingerprint().to_hex();
             let mut flags = Vec::new();
             let mut revoked = false;
+            let mut expiry_epoch: i64 = 0;
             if let Ok(vka) = ka.with_policy(&policy, None) {
                 if vka.for_transport_encryption() {
                     flags.push("encryption");
@@ -1131,8 +1136,20 @@ pub unsafe extern "C" fn pgp_certificate_subkeys(
                     flags.push("signing");
                 }
                 revoked = matches!(vka.revocation_status(), RevocationStatus::Revoked(_));
+                expiry_epoch = vka
+                    .key_expiration_time()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
             }
-            format!("{}\t{}\t{}\t{}", i, fingerprint, flags.join(","), revoked as u8)
+            format!(
+                "{}\t{}\t{}\t{}\t{}",
+                i,
+                fingerprint,
+                flags.join(","),
+                revoked as u8,
+                expiry_epoch
+            )
         })
         .collect();
     let joined = lines.join("\n");
@@ -1574,6 +1591,122 @@ pub unsafe extern "C" fn pgp_certificate_set_expiry(
     }
 
     let updated = match sequoia_cert.insert_packets(all_sigs) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
+/// Update the expiry on a single subkey (counting subkeys only, same indexing
+/// as `pgp_certificate_revoke_subkey`/`pgp_certificate_subkeys`), leaving the
+/// primary key's and every other subkey's expiry untouched.
+/// `validity_seconds == 0` clears that subkey's expiry. Writes the updated
+/// certificate to `*new_cert`. Caller must free both the original and the
+/// returned certificate separately.
+///
+/// # Safety
+/// `cert` and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_set_subkey_expiry(
+    cert: *const Certificate,
+    subkey_index: u32,
+    validity_seconds: u64,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+
+    // See the comment in `pgp_certificate_set_expiry`: wait until strictly
+    // past the target subkey's newest existing self-signature so the
+    // refreshed signature deterministically becomes the active one.
+    {
+        let newest = match sequoia_cert.keys().subkeys().nth(subkey_index as usize) {
+            Some(ka) => ka
+                .self_signatures()
+                .filter_map(|sig| sig.signature_creation_time())
+                .max(),
+            None => return FFIError::NotFound as i32,
+        };
+        if let Some(newest) = newest {
+            let target = newest + Duration::from_secs(1);
+            loop {
+                match target.duration_since(SystemTime::now()) {
+                    Ok(remaining) if remaining <= Duration::from_secs(2) => {
+                        std::thread::sleep(remaining);
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
+
+    let expiry: Option<SystemTime> = if validity_seconds > 0 {
+        match SystemTime::now().checked_add(Duration::from_secs(validity_seconds)) {
+            Some(t) => Some(t),
+            None => return FFIError::Invalid as i32,
+        }
+    } else {
+        None
+    };
+
+    let policy = StandardPolicy::new();
+    let vc = match sequoia_cert.with_policy(&policy, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut primary_signer = match sequoia_cert
+        .primary_key()
+        .key()
+        .clone()
+        .parts_into_secret()
+    {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let ka = match vc.keys().subkeys().nth(subkey_index as usize) {
+        Some(ka) => ka,
+        None => return FFIError::NotFound as i32,
+    };
+
+    let sigs = if ka.for_signing() {
+        let sub_key = match ka.key().clone().parts_into_secret() {
+            Ok(k) => k,
+            Err(_) => return FFIError::Invalid as i32,
+        };
+        let mut sub_signer = match sub_key.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        };
+        match ka.set_expiration_time(&mut primary_signer, Some(&mut sub_signer), expiry) {
+            Ok(sigs) => sigs,
+            Err(_) => return FFIError::Failed as i32,
+        }
+    } else {
+        match ka.set_expiration_time(&mut primary_signer, None, expiry) {
+            Ok(sigs) => sigs,
+            Err(_) => return FFIError::Failed as i32,
+        }
+    };
+
+    let packets: Vec<sequoia_openpgp::Packet> =
+        sigs.into_iter().map(sequoia_openpgp::Packet::from).collect();
+    let updated = match sequoia_cert.insert_packets(packets) {
         Ok(c) => c,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -3163,6 +3296,132 @@ mod tests {
 
             pgp_certificate_free(cert);
             pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn subkeys_lists_expiry_epoch_as_zero_by_default() {
+        unsafe {
+            let cert = generate_cert("subkeys-expiry-default@example.org");
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(cert, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            for line in listing_str.lines() {
+                let fields: Vec<&str> = line.split('\t').collect();
+                assert_eq!(fields[4], "0");
+            }
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    // --- per-subkey expiry ---
+
+    #[test]
+    fn set_subkey_expiry_updates_only_the_target_subkey() {
+        unsafe {
+            let cert = generate_cert("subkey-expiry@example.org");
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(cert, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let target_fp = listing_str
+                .lines()
+                .find(|l| l.split('\t').nth(2).unwrap().contains("signing"))
+                .unwrap()
+                .split('\t')
+                .nth(1)
+                .unwrap()
+                .to_string();
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_subkey_expiry(cert, 0, 3600, &mut updated),
+                FFIError::Ok as i32
+            );
+
+            let mut listing_after: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(updated, &mut listing_after),
+                FFIError::Ok as i32
+            );
+            let listing_after_str = to_owned_c_string(listing_after);
+
+            for line in listing_after_str.lines() {
+                let fields: Vec<&str> = line.split('\t').collect();
+                if fields[1] == target_fp {
+                    assert_ne!(fields[4], "0", "target subkey should have an expiry");
+                } else {
+                    assert_eq!(fields[4], "0", "other subkeys must be untouched");
+                }
+            }
+
+            // The primary key's own expiry must also be untouched.
+            let mut primary_expiry: i64 = -1;
+            assert_eq!(
+                pgp_certificate_expiry_epoch(updated, &mut primary_expiry),
+                FFIError::Ok as i32
+            );
+            assert_eq!(primary_expiry, 0);
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn set_subkey_expiry_zero_clears_expiry() {
+        unsafe {
+            let cert = generate_cert("subkey-expiry-clear@example.org");
+
+            let mut with_expiry: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_subkey_expiry(cert, 0, 3600, &mut with_expiry),
+                FFIError::Ok as i32
+            );
+
+            let mut cleared: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_subkey_expiry(with_expiry, 0, 0, &mut cleared),
+                FFIError::Ok as i32
+            );
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(cleared, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let fields: Vec<&str> =
+                listing_str.lines().next().unwrap().split('\t').collect();
+            assert_eq!(fields[4], "0");
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(with_expiry);
+            pgp_certificate_free(cleared);
+        }
+    }
+
+    #[test]
+    fn set_subkey_expiry_rejects_out_of_range_index() {
+        unsafe {
+            let cert = generate_cert("subkey-expiry-oob@example.org");
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_subkey_expiry(cert, 99, 3600, &mut updated),
+                FFIError::NotFound as i32
+            );
+            assert!(updated.is_null());
+
+            pgp_certificate_free(cert);
         }
     }
 
