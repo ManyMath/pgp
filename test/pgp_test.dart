@@ -289,6 +289,63 @@ void main() {
       expect(cert.decrypt(encrypted), 'expiring key test');
       cert.dispose();
     });
+
+    test('subkeys report no expiry by default', () {
+      final cert = pgp.generateKey('subkey-expiry@example.org');
+      for (final subkey in cert.subkeys()) {
+        expect(subkey.hasExpiry, isFalse);
+        expect(subkey.expiryDate, isNull);
+      }
+      cert.dispose();
+    });
+
+    test('setSubkeyExpiry updates only the target subkey', () {
+      final cert = pgp.generateKey('subkey-expiry@example.org');
+      final signingSubkey = cert.subkeys().firstWhere((s) => s.canSign);
+      final encryptionSubkey = cert.subkeys().firstWhere((s) => s.canEncrypt);
+
+      final updated =
+          cert.setSubkeyExpiry(signingSubkey.index, const Duration(hours: 2));
+
+      final updatedSigning =
+          updated.subkeys().firstWhere((s) => s.index == signingSubkey.index);
+      final updatedEncryption = updated
+          .subkeys()
+          .firstWhere((s) => s.index == encryptionSubkey.index);
+
+      expect(updatedSigning.hasExpiry, isTrue);
+      expect(updatedEncryption.hasExpiry, isFalse);
+      expect(updated.expiryEpoch(), 0); // primary key untouched
+
+      updated.dispose();
+      cert.dispose();
+    });
+
+    test('setSubkeyExpiry with null clears that subkey\'s expiry', () {
+      final cert = pgp.generateKey('subkey-expiry@example.org');
+      final signingSubkey = cert.subkeys().firstWhere((s) => s.canSign);
+
+      final withExpiry =
+          cert.setSubkeyExpiry(signingSubkey.index, const Duration(hours: 2));
+      final cleared = withExpiry.setSubkeyExpiry(signingSubkey.index, null);
+
+      final clearedSigning =
+          cleared.subkeys().firstWhere((s) => s.index == signingSubkey.index);
+      expect(clearedSigning.hasExpiry, isFalse);
+
+      cleared.dispose();
+      withExpiry.dispose();
+      cert.dispose();
+    });
+
+    test('setSubkeyExpiry throws for an out-of-range index', () {
+      final cert = pgp.generateKey('subkey-expiry@example.org');
+      expect(
+        () => cert.setSubkeyExpiry(99, const Duration(hours: 2)),
+        throwsA(isA<PgpException>()),
+      );
+      cert.dispose();
+    });
   });
 
   group('detached signatures', () {

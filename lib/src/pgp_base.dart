@@ -77,13 +77,27 @@ class SubkeyInfo {
   /// Whether this subkey has been revoked.
   final bool isRevoked;
 
+  /// This subkey's own expiration as seconds since the Unix epoch; 0 means no
+  /// expiry. Independent of the primary key's expiry and of other subkeys'
+  /// expiry: see [Certificate.setSubkeyExpiry].
+  final int expiryEpoch;
+
   const SubkeyInfo({
     required this.index,
     required this.fingerprint,
     required this.canEncrypt,
     required this.canSign,
     required this.isRevoked,
+    required this.expiryEpoch,
   });
+
+  /// Whether this subkey has an expiry date set.
+  bool get hasExpiry => expiryEpoch != 0;
+
+  /// This subkey's expiry as a UTC [DateTime], or null if it has no expiry.
+  DateTime? get expiryDate => hasExpiry
+      ? DateTime.fromMillisecondsSinceEpoch(expiryEpoch * 1000, isUtc: true)
+      : null;
 }
 
 /// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify],
@@ -377,6 +391,7 @@ class Certificate {
           canEncrypt: flags.contains('encryption'),
           canSign: flags.contains('signing'),
           isRevoked: fields[3] == '1',
+          expiryEpoch: int.parse(fields[4]),
         );
       }).toList();
     } finally {
@@ -477,6 +492,18 @@ class Certificate {
         (validity == null || validity == Duration.zero) ? 0 : validity.inSeconds;
     return _derive(
         (out) => _bindings.pgp_certificate_set_expiry(_ptr, secs, out));
+  }
+
+  /// Updates the expiry on the subkey at [index] (counting subkeys only,
+  /// same indexing as [subkeys] and [revokeSubkey]), returning a new
+  /// [Certificate]. The primary key's expiry and every other subkey's expiry
+  /// are left untouched. Pass null to clear that subkey's expiry.
+  /// The receiver is unchanged and must be disposed separately.
+  Certificate setSubkeyExpiry(int index, Duration? validity) {
+    final secs =
+        (validity == null || validity == Duration.zero) ? 0 : validity.inSeconds;
+    return _derive((out) => _bindings.pgp_certificate_set_subkey_expiry(
+        _ptr, index, secs, out));
   }
 
   /// Encrypts [data] bytes to this certificate, returning an ASCII-armored
