@@ -245,6 +245,24 @@ int32_t pgp_certificate_fingerprint(const struct Certificate *cert, char **out);
 int32_t pgp_certificate_userids(const struct Certificate *cert, char **out);
 
 /**
+ * Return one line per user ID: `user_id\trevoked\tprimary\texpiry_epoch`,
+ * where `revoked` is `1` if that user ID is revoked (`0` otherwise),
+ * `primary` is `1` for the certificate's primary user ID (`0` otherwise),
+ * and `expiry_epoch` is the expiration of the user ID's *binding
+ * signature* (i.e. how long the certification itself is valid for) as
+ * seconds since the Unix epoch, or `0` if it doesn't expire. Includes
+ * revoked user IDs, same as `pgp_certificate_userids`. `user_id` values
+ * are assumed not to contain a tab or newline (true of every user ID this
+ * library generates); a user ID crafted to contain one will desynchronize
+ * column parsing, same tradeoff `pgp_certificate_userids` already makes.
+ * Caller must free `*out` with `free()`.
+ *
+ * # Safety
+ * `cert` and `out` must be non-null.
+ */
+int32_t pgp_certificate_userids_info(const struct Certificate *cert, char **out);
+
+/**
  * Return one line per subkey:
  * `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
  * comma-separated list of capabilities (`encryption`, `signing`), `revoked`

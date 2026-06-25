@@ -1158,6 +1158,68 @@ pub unsafe extern "C" fn pgp_certificate_userids(
     write_c_string(&joined, out)
 }
 
+/// Return one line per user ID: `user_id\trevoked\tprimary\texpiry_epoch`,
+/// where `revoked` is `1` if that user ID is revoked (`0` otherwise),
+/// `primary` is `1` for the certificate's primary user ID (`0` otherwise),
+/// and `expiry_epoch` is the expiration of the user ID's *binding
+/// signature* (i.e. how long the certification itself is valid for) as
+/// seconds since the Unix epoch, or `0` if it doesn't expire. Includes
+/// revoked user IDs, same as `pgp_certificate_userids`. `user_id` values
+/// are assumed not to contain a tab or newline (true of every user ID this
+/// library generates); a user ID crafted to contain one will desynchronize
+/// column parsing, same tradeoff `pgp_certificate_userids` already makes.
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `cert` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_userids_info(
+    cert: *const Certificate,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+    let policy = StandardPolicy::new();
+
+    let primary_value: Option<Vec<u8>> = sequoia_cert
+        .with_policy(&policy, None)
+        .ok()
+        .and_then(|vc| vc.primary_userid().ok())
+        .map(|ua| ua.userid().value().to_vec());
+
+    let lines: Vec<String> = sequoia_cert
+        .userids()
+        .map(|ua| {
+            let user_id = String::from_utf8_lossy(ua.userid().value()).into_owned();
+            let is_primary = primary_value.as_deref() == Some(ua.userid().value());
+            let mut revoked = false;
+            let mut expiry_epoch: i64 = 0;
+            if let Ok(vua) = ua.with_policy(&policy, None) {
+                revoked = matches!(vua.revocation_status(), RevocationStatus::Revoked(_));
+                expiry_epoch = vua
+                    .binding_signature()
+                    .signature_expiration_time()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+            }
+            format!(
+                "{}\t{}\t{}\t{}",
+                user_id, revoked as u8, is_primary as u8, expiry_epoch
+            )
+        })
+        .collect();
+    let joined = lines.join("\n");
+    write_c_string(&joined, out)
+}
+
 /// Return one line per subkey:
 /// `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
 /// comma-separated list of capabilities (`encryption`, `signing`), `revoked`
@@ -3784,6 +3846,111 @@ mod tests {
 
             pgp_certificate_free(alice);
             pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn userids_info_reports_primary_and_unrevoked_by_default() {
+        unsafe {
+            let cert = generate_cert("userids-info@example.org");
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userids_info(cert, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let lines: Vec<&str> = listing_str.lines().collect();
+            assert_eq!(lines.len(), 1);
+            let fields: Vec<&str> = lines[0].split('\t').collect();
+            assert_eq!(fields[0], "userids-info@example.org");
+            assert_eq!(fields[1], "0"); // revoked
+            assert_eq!(fields[2], "1"); // primary
+            assert_eq!(fields[3], "0"); // expiry_epoch
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn userids_info_reports_secondary_user_id_as_non_primary() {
+        unsafe {
+            let cert = generate_cert("userids-info-primary@example.org");
+            let user_id = CString::new("second@example.org").unwrap();
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_userid(cert, user_id.as_ptr(), &mut updated),
+                FFIError::Ok as i32
+            );
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userids_info(updated, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let primary_flags: std::collections::HashMap<&str, &str> = listing_str
+                .lines()
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    (f[0], f[2])
+                })
+                .collect();
+            assert_eq!(primary_flags["userids-info-primary@example.org"], "1");
+            assert_eq!(primary_flags["second@example.org"], "0");
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn userids_info_agrees_with_revoke_userid() {
+        unsafe {
+            let cert = generate_cert("userids-info-revoke@example.org");
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            let user_id = CString::new("userids-info-revoke@example.org").unwrap();
+            assert_eq!(
+                pgp_certificate_revoke_userid(
+                    cert,
+                    user_id.as_ptr(),
+                    0,
+                    ptr::null(),
+                    &mut revoked,
+                ),
+                FFIError::Ok as i32
+            );
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userids_info(revoked, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let fields: Vec<&str> = listing_str.lines().next().unwrap().split('\t').collect();
+            assert_eq!(fields[1], "1"); // revoked
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn userids_info_rejects_null_args() {
+        unsafe {
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userids_info(ptr::null(), &mut out),
+                FFIError::Null as i32
+            );
+            let cert = generate_cert("userids-info-null@example.org");
+            assert_eq!(
+                pgp_certificate_userids_info(cert, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+            pgp_certificate_free(cert);
         }
     }
 }
