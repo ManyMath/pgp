@@ -100,6 +100,30 @@ int32_t pgp_certificate_encrypt_string(const struct Certificate *cert,
 int32_t pgp_message_recipient_key_ids(const char *armored_message, char **out);
 
 /**
+ * Recovers the symmetric session key that encrypts an ASCII-armored
+ * message's body, using `cert`'s transport-encryption subkey(s), *without*
+ * decrypting the message body itself. Useful for archival/escrow
+ * workflows: the recovered session key (as uppercase hex) can be stored or
+ * handed to a third party to later decrypt the message via
+ * `pgp_decrypt_with_session_key`, without ever exposing `cert`'s long-term
+ * secret key material to that party. Writes the session key as an
+ * uppercase-hex string to `*session_key_hex` and the RFC 4880 symmetric
+ * algorithm code to `*algo` (see `pgp_decrypt_with_session_key`'s doc
+ * comment for the encoding). Returns `Failed` if no PKESK packet in the
+ * message can be decrypted with any of `cert`'s transport-encryption
+ * subkeys.
+ * Caller must free `*session_key_hex` with `free()`.
+ *
+ * # Safety
+ * `cert`, `armored_message`, `session_key_hex`, and `algo` must be
+ * non-null.
+ */
+int32_t pgp_message_session_key(const struct Certificate *cert,
+                                const char *armored_message,
+                                char **session_key_hex,
+                                uint8_t *algo);
+
+/**
  * Decrypt an ASCII-armored message using the certificate and write plaintext to
  * `*plaintext`. Caller must free `*plaintext` with `free()`.
  *
@@ -109,6 +133,26 @@ int32_t pgp_message_recipient_key_ids(const char *armored_message, char **out);
 int32_t pgp_certificate_decrypt_string(const struct Certificate *cert,
                                        const char *armored_message,
                                        char **plaintext);
+
+/**
+ * Decrypt an ASCII-armored message using a session key directly (e.g. one
+ * recovered via `pgp_message_session_key`) instead of a certificate's
+ * secret key material: no `Certificate` handle is needed at all. `algo` is
+ * the RFC 4880 symmetric algorithm code the session key was generated for
+ * (7 = AES128, 8 = AES192, 9 = AES256, 10 = Twofish, 3 = CAST5,
+ * 4 = Blowfish, 2 = TripleDES, 1 = IDEA: Sequoia's `SymmetricAlgorithm`
+ * numeric encoding; pass the value `pgp_message_session_key` wrote to its
+ * own `algo` out-parameter to round-trip exactly). `session_key_hex` is an
+ * uppercase- or lowercase-hex-encoded byte string of the length that
+ * algorithm expects. Caller must free `*plaintext` with `free()`.
+ *
+ * # Safety
+ * `session_key_hex`, `armored_message`, and `plaintext` must be non-null.
+ */
+int32_t pgp_decrypt_with_session_key(const char *session_key_hex,
+                                     uint8_t algo,
+                                     const char *armored_message,
+                                     char **plaintext);
 
 /**
  * Sign `plaintext` with the certificate and write an ASCII-armored signed

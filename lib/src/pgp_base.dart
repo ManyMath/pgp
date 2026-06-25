@@ -263,6 +263,23 @@ class SignedPlaintext {
       : null;
 }
 
+/// A message's symmetric session key, returned by [Certificate.sessionKey]
+/// without decrypting the message body: see that method for why this is
+/// useful (archival/escrow decryption without exposing a long-term key).
+class SessionKeyInfo {
+  /// The session key as an uppercase-hex string.
+  final String hex;
+
+  /// The RFC 4880 symmetric algorithm code the session key was generated
+  /// for. Pass straight through to [PGP.decryptWithSessionKey].
+  final int algo;
+
+  const SessionKeyInfo({
+    required this.hex,
+    required this.algo,
+  });
+}
+
 /// Raw verified bytes and signer fingerprint returned by
 /// [Certificate.verifyBytesWithSigner].
 class VerifiedBytes {
@@ -341,6 +358,38 @@ class Certificate {
         message,
         _bindings.pgp_certificate_decrypt_string,
       );
+
+  /// Recovers the symmetric session key that encrypts [message]'s body,
+  /// using this certificate's transport-encryption subkey(s), *without*
+  /// decrypting the message body itself. Useful for archival/escrow
+  /// workflows: the recovered [SessionKeyInfo] can be stored or handed to a
+  /// third party to later decrypt the message via
+  /// [PGP.decryptWithSessionKey], without ever exposing this certificate's
+  /// long-term secret key material to that party.
+  ///
+  /// Throws [PgpException] if no PKESK packet in [message] can be decrypted
+  /// with any of this certificate's transport-encryption subkeys.
+  SessionKeyInfo sessionKey(String message) {
+    final msgPtr = message.toNativeUtf8();
+    final hexOut = calloc<Pointer<Char>>();
+    final algoOut = calloc<Uint8>();
+    try {
+      final code = _bindings.pgp_message_session_key(
+        _ptr,
+        msgPtr.cast(),
+        hexOut,
+        algoOut,
+      );
+      if (code != 0) throw PgpException(code);
+      final hex = hexOut.value.cast<Utf8>().toDartString();
+      calloc.free(hexOut.value);
+      return SessionKeyInfo(hex: hex, algo: algoOut.value);
+    } finally {
+      calloc.free(msgPtr);
+      calloc.free(hexOut);
+      calloc.free(algoOut);
+    }
+  }
 
   /// Signs [plaintext] with this secret certificate as an armored message.
   String sign(String plaintext) => _transformString(
@@ -1372,6 +1421,36 @@ class PGP {
       calloc.free(out.value);
       return raw.isEmpty ? [] : raw.split('\n');
     } finally {
+      calloc.free(msgPtr);
+      calloc.free(out);
+    }
+  }
+
+  /// Decrypts an ASCII-armored [armoredMessage] using [sessionKeyInfo] (e.g.
+  /// recovered via [Certificate.sessionKey]) instead of a certificate's
+  /// secret key material: no [Certificate] is needed at all.
+  ///
+  /// Throws [PgpException] if the session key doesn't decrypt the message.
+  static String decryptWithSessionKey(
+    SessionKeyInfo sessionKeyInfo,
+    String armoredMessage,
+  ) {
+    final hexPtr = sessionKeyInfo.hex.toNativeUtf8();
+    final msgPtr = armoredMessage.toNativeUtf8();
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_decrypt_with_session_key(
+        hexPtr.cast(),
+        sessionKeyInfo.algo,
+        msgPtr.cast(),
+        out,
+      );
+      if (code != 0) throw PgpException(code);
+      final result = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      return result;
+    } finally {
+      calloc.free(hexPtr);
       calloc.free(msgPtr);
       calloc.free(out);
     }

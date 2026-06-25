@@ -628,6 +628,64 @@ int main(void) {
   free(recipient_key_ids);
   pgp_certificate_free(symmetric_signer);
 
+  struct Certificate *session_key_cert = NULL;
+  rc = pgp_key_generate("session-key@example.org", &session_key_cert);
+  if (rc != 0 || session_key_cert == NULL) {
+    fprintf(stderr, "pgp_key_generate (session_key_cert) failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  char *session_key_cipher = NULL;
+  rc = pgp_certificate_encrypt_string(session_key_cert, "session key payload",
+                                       &session_key_cipher);
+  if (rc != 0 || session_key_cipher == NULL) {
+    fprintf(stderr, "pgp_certificate_encrypt_string (session key) failed: "
+                     "rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(session_key_cert);
+    return 1;
+  }
+
+  char *session_key_hex = NULL;
+  uint8_t session_key_algo = 0;
+  rc = pgp_message_session_key(session_key_cert, session_key_cipher,
+                                &session_key_hex, &session_key_algo);
+  if (rc != 0 || session_key_hex == NULL || session_key_algo == 0) {
+    fprintf(stderr,
+            "pgp_message_session_key failed: rc=%" PRId32 " algo=%u\n",
+            rc, session_key_algo);
+    free(session_key_cipher);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(session_key_cert);
+    return 1;
+  }
+
+  char *session_key_plaintext = NULL;
+  rc = pgp_decrypt_with_session_key(session_key_hex, session_key_algo,
+                                     session_key_cipher,
+                                     &session_key_plaintext);
+  if (rc != 0 || session_key_plaintext == NULL ||
+      strcmp(session_key_plaintext, "session key payload") != 0) {
+    fprintf(stderr,
+            "pgp_decrypt_with_session_key failed: rc=%" PRId32
+            " plaintext=%s\n",
+            rc, session_key_plaintext ? session_key_plaintext : "(null)");
+    free(session_key_hex);
+    free(session_key_cipher);
+    free(session_key_plaintext);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(session_key_cert);
+    return 1;
+  }
+  free(session_key_hex);
+  free(session_key_cipher);
+  free(session_key_plaintext);
+  pgp_certificate_free(session_key_cert);
+
   char *armored = NULL;
   rc = pgp_certificate_export_armored(cert, &armored);
   if (rc != 0 || armored == NULL) {

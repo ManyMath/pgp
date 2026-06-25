@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Added `Certificate.sessionKey(message)`, recovering a message's symmetric
+  session key without decrypting the message body, and the static
+  `PGP.decryptWithSessionKey(sessionKeyInfo, message)`, decrypting a message
+  from a session key alone with no certificate or secret key material at
+  all. Together these enable archival/escrow decryption workflows without
+  exposing a long-term secret key to whoever holds the session key.
+
 - Added `Certificate.certifyUserIdWithTrust`, a trust-signature variant of
   `certifyUserId` that records an RFC 4880 Trust Signature (delegation
   depth and confidence amount) on the certification, letting a certifier

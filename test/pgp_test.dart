@@ -1370,6 +1370,53 @@ void main() {
     });
   });
 
+  group('sessionKey / decryptWithSessionKey', () {
+    test('recovers a session key and decrypts with it', () {
+      final cert = pgp.generateKey('session-key@example.org');
+      final cipher = cert.encrypt('session key test payload');
+
+      final sessionKey = cert.sessionKey(cipher);
+      expect(sessionKey.hex, isNotEmpty);
+      expect(sessionKey.algo, isNonZero);
+
+      final plaintext = PGP.decryptWithSessionKey(sessionKey, cipher);
+      expect(plaintext, 'session key test payload');
+
+      cert.dispose();
+    });
+
+    test('sessionKey throws when using the wrong certificate', () {
+      final cert = pgp.generateKey('session-key-wrong@example.org');
+      final other = pgp.generateKey('session-key-other@example.org');
+      final cipher = cert.encrypt('payload');
+
+      expect(
+        () => other.sessionKey(cipher),
+        throwsA(isA<PgpException>()),
+      );
+
+      cert.dispose();
+      other.dispose();
+    });
+
+    test('decryptWithSessionKey throws for a bogus session key', () {
+      final cert = pgp.generateKey('session-key-bogus@example.org');
+      final cipher = cert.encrypt('payload');
+      final sessionKey = cert.sessionKey(cipher);
+      final bogus = SessionKeyInfo(
+        hex: List.filled(sessionKey.hex.length ~/ 2, '00').join(),
+        algo: sessionKey.algo,
+      );
+
+      expect(
+        () => PGP.decryptWithSessionKey(bogus, cipher),
+        throwsA(isA<PgpException>()),
+      );
+
+      cert.dispose();
+    });
+  });
+
   group('encryptToRecipients', () {
     test('encrypts to two recipients, each can decrypt', () {
       final alice = pgp.generateKey('alice@example.org');

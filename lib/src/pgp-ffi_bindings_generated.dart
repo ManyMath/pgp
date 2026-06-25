@@ -250,6 +250,48 @@ class PgpFfiBindings {
           int Function(
               ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// Recovers the symmetric session key that encrypts an ASCII-armored
+  /// message's body, using `cert`'s transport-encryption subkey(s), *without*
+  /// decrypting the message body itself. Useful for archival/escrow
+  /// workflows: the recovered session key (as uppercase hex) can be stored or
+  /// handed to a third party to later decrypt the message via
+  /// `pgp_decrypt_with_session_key`, without ever exposing `cert`'s long-term
+  /// secret key material to that party. Writes the session key as an
+  /// uppercase-hex string to `*session_key_hex` and the RFC 4880 symmetric
+  /// algorithm code to `*algo` (see `pgp_decrypt_with_session_key`'s doc
+  /// comment for the encoding). Returns `Failed` if no PKESK packet in the
+  /// message can be decrypted with any of `cert`'s transport-encryption
+  /// subkeys.
+  /// Caller must free `*session_key_hex` with `free()`.
+  ///
+  /// # Safety
+  /// `cert`, `armored_message`, `session_key_hex`, and `algo` must be
+  /// non-null.
+  int pgp_message_session_key(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Char> armored_message,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> session_key_hex,
+    ffi.Pointer<ffi.Uint8> algo,
+  ) {
+    return _pgp_message_session_key(
+      cert,
+      armored_message,
+      session_key_hex,
+      algo,
+    );
+  }
+
+  late final _pgp_message_session_keyPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Uint8>)>>('pgp_message_session_key');
+  late final _pgp_message_session_key = _pgp_message_session_keyPtr.asFunction<
+      int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Uint8>)>();
+
   /// Decrypt an ASCII-armored message using the certificate and write plaintext to
   /// `*plaintext`. Caller must free `*plaintext` with `free()`.
   ///
@@ -275,6 +317,43 @@ class PgpFfiBindings {
   late final _pgp_certificate_decrypt_string =
       _pgp_certificate_decrypt_stringPtr.asFunction<
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
+  /// Decrypt an ASCII-armored message using a session key directly (e.g. one
+  /// recovered via `pgp_message_session_key`) instead of a certificate's
+  /// secret key material: no `Certificate` handle is needed at all. `algo` is
+  /// the RFC 4880 symmetric algorithm code the session key was generated for
+  /// (7 = AES128, 8 = AES192, 9 = AES256, 10 = Twofish, 3 = CAST5,
+  /// 4 = Blowfish, 2 = TripleDES, 1 = IDEA: Sequoia's `SymmetricAlgorithm`
+  /// numeric encoding; pass the value `pgp_message_session_key` wrote to its
+  /// own `algo` out-parameter to round-trip exactly). `session_key_hex` is an
+  /// uppercase- or lowercase-hex-encoded byte string of the length that
+  /// algorithm expects. Caller must free `*plaintext` with `free()`.
+  ///
+  /// # Safety
+  /// `session_key_hex`, `armored_message`, and `plaintext` must be non-null.
+  int pgp_decrypt_with_session_key(
+    ffi.Pointer<ffi.Char> session_key_hex,
+    int algo,
+    ffi.Pointer<ffi.Char> armored_message,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext,
+  ) {
+    return _pgp_decrypt_with_session_key(
+      session_key_hex,
+      algo,
+      armored_message,
+      plaintext,
+    );
+  }
+
+  late final _pgp_decrypt_with_session_keyPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Uint8,
+                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_decrypt_with_session_key');
+  late final _pgp_decrypt_with_session_key =
+      _pgp_decrypt_with_session_keyPtr.asFunction<
+          int Function(ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   /// Sign `plaintext` with the certificate and write an ASCII-armored signed

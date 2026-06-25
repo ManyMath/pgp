@@ -166,6 +166,111 @@ impl DecryptionHelper for DecryptOnlyHelper<'_> {
     }
 }
 
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02X}")).collect()
+}
+
+fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect()
+}
+
+/// Recovers a message's session key (without decrypting the message body)
+/// using `secret`'s transport-encryption subkey(s). Used by
+/// `pgp_message_session_key`.
+struct SessionKeyHelper<'a> {
+    secret: &'a SequoiaCert,
+    policy: &'a dyn Policy,
+    session_key_hex: Option<String>,
+    algo: Option<SymmetricAlgorithm>,
+}
+
+impl VerificationHelper for SessionKeyHelper<'_> {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> Result<Vec<SequoiaCert>> {
+        Ok(Vec::new())
+    }
+
+    fn check(&mut self, _structure: MessageStructure) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl DecryptionHelper for SessionKeyHelper<'_> {
+    fn decrypt(
+        &mut self,
+        pkesks: &[PKESK],
+        _skesks: &[SKESK],
+        sym_algo: Option<SymmetricAlgorithm>,
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> Result<Option<SequoiaCert>> {
+        let keys = self
+            .secret
+            .keys()
+            .unencrypted_secret()
+            .with_policy(self.policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+            .map(|key| key.key().clone())
+            .collect::<Vec<_>>();
+
+        for pkesk in pkesks {
+            for key in &keys {
+                let mut keypair = key.clone().into_keypair()?;
+                if let Some((algo, session_key)) = pkesk.decrypt(&mut keypair, sym_algo) {
+                    if decrypt(algo, &session_key) {
+                        self.session_key_hex = Some(bytes_to_hex(&session_key));
+                        self.algo = algo.or(sym_algo);
+                        return Ok(Some(self.secret.clone()));
+                    }
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("No matching decryption key"))
+    }
+}
+
+/// Decrypts a message body given a session key directly, bypassing any
+/// certificate or secret key material entirely. Used by
+/// `pgp_decrypt_with_session_key`.
+struct RawSessionKeyHelper {
+    session_key: SessionKey,
+    algo: Option<SymmetricAlgorithm>,
+}
+
+impl VerificationHelper for RawSessionKeyHelper {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> Result<Vec<SequoiaCert>> {
+        Ok(Vec::new())
+    }
+
+    fn check(&mut self, _structure: MessageStructure) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl DecryptionHelper for RawSessionKeyHelper {
+    fn decrypt(
+        &mut self,
+        _pkesks: &[PKESK],
+        _skesks: &[SKESK],
+        _sym_algo: Option<SymmetricAlgorithm>,
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> Result<Option<SequoiaCert>> {
+        if decrypt(self.algo, &self.session_key) {
+            Ok(None)
+        } else {
+            Err(anyhow::anyhow!("Session key did not decrypt the message"))
+        }
+    }
+}
+
 /// # Safety
 /// `cert` must be non-null and from a `pgp_certificate_*` constructor.
 #[no_mangle]
@@ -543,6 +648,68 @@ pub unsafe extern "C" fn pgp_message_recipient_key_ids(
     write_c_string(&joined, out)
 }
 
+/// Recovers the symmetric session key that encrypts an ASCII-armored
+/// message's body, using `cert`'s transport-encryption subkey(s), *without*
+/// decrypting the message body itself. Useful for archival/escrow
+/// workflows: the recovered session key (as uppercase hex) can be stored or
+/// handed to a third party to later decrypt the message via
+/// `pgp_decrypt_with_session_key`, without ever exposing `cert`'s long-term
+/// secret key material to that party. Writes the session key as an
+/// uppercase-hex string to `*session_key_hex` and the RFC 4880 symmetric
+/// algorithm code to `*algo` (see `pgp_decrypt_with_session_key`'s doc
+/// comment for the encoding). Returns `Failed` if no PKESK packet in the
+/// message can be decrypted with any of `cert`'s transport-encryption
+/// subkeys.
+/// Caller must free `*session_key_hex` with `free()`.
+///
+/// # Safety
+/// `cert`, `armored_message`, `session_key_hex`, and `algo` must be
+/// non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_message_session_key(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    session_key_hex: *mut *mut libc::c_char,
+    algo: *mut u8,
+) -> i32 {
+    if cert.is_null() || armored_message.is_null() || session_key_hex.is_null() || algo.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *session_key_hex = ptr::null_mut();
+    *algo = 0;
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = SessionKeyHelper {
+        secret: cert,
+        policy,
+        session_key_hex: None,
+        algo: None,
+    };
+    let decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(decryptor) => decryptor,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let helper = decryptor.into_helper();
+    let hex = match helper.session_key_hex {
+        Some(hex) => hex,
+        None => return FFIError::Failed as i32,
+    };
+    *algo = helper.algo.map(u8::from).unwrap_or(0);
+    write_c_string(&hex, session_key_hex)
+}
+
 /// Decrypt an ASCII-armored message using the certificate and write plaintext to
 /// `*plaintext`. Caller must free `*plaintext` with `free()`.
 ///
@@ -570,6 +737,66 @@ pub unsafe extern "C" fn pgp_certificate_decrypt_string(
     let helper = DecryptOnlyHelper {
         secret: cert,
         policy,
+    };
+    let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(decryptor) => decryptor,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if decryptor.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let text = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    write_c_string(&text, plaintext)
+}
+
+/// Decrypt an ASCII-armored message using a session key directly (e.g. one
+/// recovered via `pgp_message_session_key`) instead of a certificate's
+/// secret key material: no `Certificate` handle is needed at all. `algo` is
+/// the RFC 4880 symmetric algorithm code the session key was generated for
+/// (7 = AES128, 8 = AES192, 9 = AES256, 10 = Twofish, 3 = CAST5,
+/// 4 = Blowfish, 2 = TripleDES, 1 = IDEA: Sequoia's `SymmetricAlgorithm`
+/// numeric encoding; pass the value `pgp_message_session_key` wrote to its
+/// own `algo` out-parameter to round-trip exactly). `session_key_hex` is an
+/// uppercase- or lowercase-hex-encoded byte string of the length that
+/// algorithm expects. Caller must free `*plaintext` with `free()`.
+///
+/// # Safety
+/// `session_key_hex`, `armored_message`, and `plaintext` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_with_session_key(
+    session_key_hex: *const libc::c_char,
+    algo: u8,
+    armored_message: *const libc::c_char,
+    plaintext: *mut *mut libc::c_char,
+) -> i32 {
+    if session_key_hex.is_null() || armored_message.is_null() || plaintext.is_null() {
+        return FFIError::Null as i32;
+    }
+    *plaintext = ptr::null_mut();
+
+    let hex_str = match CStr::from_ptr(session_key_hex).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let key_bytes = match hex_to_bytes(hex_str) {
+        Some(b) => b,
+        None => return FFIError::Invalid as i32,
+    };
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+
+    let policy = &StandardPolicy::new();
+    let helper = RawSessionKeyHelper {
+        session_key: SessionKey::from(key_bytes),
+        algo: if algo == 0 { None } else { Some(SymmetricAlgorithm::from(algo)) },
     };
     let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
         Ok(builder) => match builder.with_policy(policy, None, helper) {
@@ -4753,6 +4980,175 @@ mod tests {
             );
             assert_eq!(
                 pgp_message_recipient_key_ids(msg.as_ptr(), ptr::null_mut()),
+                FFIError::Null as i32
+            );
+        }
+    }
+
+    // --- session key extraction / raw session-key decrypt ---
+
+    #[test]
+    fn message_session_key_then_decrypt_with_session_key_round_trip() {
+        unsafe {
+            let cert = generate_cert("session-key@example.org");
+            let plaintext = CString::new("session key round trip payload").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_encrypt_string(cert, plaintext.as_ptr(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let mut session_key_hex: *mut libc::c_char = ptr::null_mut();
+            let mut algo: u8 = 0;
+            assert_eq!(
+                pgp_message_session_key(cert, cipher, &mut session_key_hex, &mut algo),
+                FFIError::Ok as i32
+            );
+            let session_key_hex = to_owned_c_string(session_key_hex);
+            assert!(!session_key_hex.is_empty());
+            assert_ne!(algo, 0);
+
+            let session_key_hex_c = CString::new(session_key_hex).unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_with_session_key(
+                    session_key_hex_c.as_ptr(),
+                    algo,
+                    cipher,
+                    &mut recovered,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(recovered), "session key round trip payload");
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn message_session_key_rejects_wrong_certificate() {
+        unsafe {
+            let cert = generate_cert("session-key-wrong@example.org");
+            let other = generate_cert("session-key-other@example.org");
+            let plaintext = CString::new("payload").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_encrypt_string(cert, plaintext.as_ptr(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let mut session_key_hex: *mut libc::c_char = ptr::null_mut();
+            let mut algo: u8 = 0;
+            assert_eq!(
+                pgp_message_session_key(other, cipher, &mut session_key_hex, &mut algo),
+                FFIError::Failed as i32
+            );
+            assert!(session_key_hex.is_null());
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(other);
+        }
+    }
+
+    #[test]
+    fn message_session_key_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("session-key-null@example.org");
+            let msg = CString::new("placeholder").unwrap();
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            let mut algo: u8 = 0;
+
+            assert_eq!(
+                pgp_message_session_key(ptr::null(), msg.as_ptr(), &mut out, &mut algo),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_message_session_key(cert, ptr::null(), &mut out, &mut algo),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_message_session_key(cert, msg.as_ptr(), ptr::null_mut(), &mut algo),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_message_session_key(cert, msg.as_ptr(), &mut out, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn decrypt_with_session_key_rejects_wrong_key() {
+        unsafe {
+            let cert = generate_cert("session-key-decrypt-wrong@example.org");
+            let plaintext = CString::new("payload").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_encrypt_string(cert, plaintext.as_ptr(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let bogus_key = CString::new("00".repeat(32)).unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_with_session_key(
+                    bogus_key.as_ptr(),
+                    9, // AES256
+                    cipher,
+                    &mut recovered,
+                ),
+                FFIError::Failed as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn decrypt_with_session_key_rejects_invalid_hex() {
+        unsafe {
+            let cert = generate_cert("session-key-decrypt-invalid@example.org");
+            let plaintext = CString::new("payload").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_encrypt_string(cert, plaintext.as_ptr(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let not_hex = CString::new("not hex").unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_with_session_key(not_hex.as_ptr(), 9, cipher, &mut recovered),
+                FFIError::Invalid as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn decrypt_with_session_key_rejects_null_args() {
+        unsafe {
+            let key = CString::new("00".repeat(32)).unwrap();
+            let msg = CString::new("placeholder").unwrap();
+            let mut out: *mut libc::c_char = ptr::null_mut();
+
+            assert_eq!(
+                pgp_decrypt_with_session_key(ptr::null(), 9, msg.as_ptr(), &mut out),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_decrypt_with_session_key(key.as_ptr(), 9, ptr::null(), &mut out),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_decrypt_with_session_key(key.as_ptr(), 9, msg.as_ptr(), ptr::null_mut()),
                 FFIError::Null as i32
             );
         }
