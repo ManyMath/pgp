@@ -823,6 +823,39 @@ class PgpFfiBindings {
       int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
           ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
+  /// Encrypt all currently-unencrypted secret key material in `cert` with
+  /// `passphrase`, writing a new certificate with locked secrets to
+  /// `*out_cert`: the counterpart to `pgp_certificate_unlock`. Keys that are
+  /// already passphrase-protected are left as-is (so this also works to add
+  /// protection to a mix of locked and unlocked keys), which means calling
+  /// `lock` again with a different passphrase does *not* change the
+  /// passphrase on already-locked keys; `unlock` first if you need to rotate
+  /// an existing passphrase.
+  ///
+  /// Returns `NotFound` (-4) if `cert` carries no secret material.
+  ///
+  /// # Safety
+  /// `cert`, `passphrase`, and `out_cert` must be non-null.
+  int pgp_certificate_lock(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Char> passphrase,
+    ffi.Pointer<ffi.Pointer<Certificate>> out_cert,
+  ) {
+    return _pgp_certificate_lock(
+      cert,
+      passphrase,
+      out_cert,
+    );
+  }
+
+  late final _pgp_certificate_lockPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>>('pgp_certificate_lock');
+  late final _pgp_certificate_lock = _pgp_certificate_lockPtr.asFunction<
+      int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
   /// Sign `plaintext` with the certificate and write an ASCII-armored detached
   /// signature (BEGIN PGP SIGNATURE) to `*armored_sig`. The plaintext is left
   /// untouched. Caller must free `*armored_sig` with `free()`.
