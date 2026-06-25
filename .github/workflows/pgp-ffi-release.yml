@@ -42,6 +42,25 @@ jobs:
           components: clippy
       - run: cargo clippy --manifest-path pgp-ffi/Cargo.toml --lib --tests -- -D warnings
 
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Scan dependencies for known vulnerabilities
+        working-directory: pgp-ffi
+        run: |
+          # RUSTSEC-2023-0071: rsa crate timing sidechannel (Marvin Attack),
+          # pulled in transitively by sequoia-openpgp. No fixed version
+          # exists upstream yet, so it's ignored here as an accepted risk
+          # rather than silently going unnoticed by the tool. Revisit and
+          # drop this ignore once a fix lands.
+          cargo audit --ignore RUSTSEC-2023-0071
+
   c-smoke-test:
     name: C smoke test (test.c)
     runs-on: ubuntu-latest
@@ -84,7 +103,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.name }})
-    needs: [check-header, unit-tests, clippy, c-smoke-test, asan]
+    needs: [check-header, unit-tests, clippy, audit, c-smoke-test, asan]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
