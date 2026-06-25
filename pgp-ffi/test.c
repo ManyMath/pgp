@@ -141,6 +141,47 @@ int main(void) {
   free(alice_fp);
   pgp_certificate_free(alice);
 
+  struct Certificate *introducer = NULL;
+  rc = pgp_key_generate("introducer@example.org", &introducer);
+  if (rc != 0 || introducer == NULL) {
+    fprintf(stderr, "pgp_key_generate (introducer) failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  struct Certificate *trust_certified = NULL;
+  rc = pgp_certificate_certify_userid_with_trust(
+      introducer, cert, "other@example.org", 1, 120, &trust_certified);
+  if (rc != 0 || trust_certified == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_certify_userid_with_trust failed: rc=%" PRId32
+            "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(introducer);
+    return 1;
+  }
+
+  char *trust_certifications = NULL;
+  rc = pgp_certificate_userid_certifications(trust_certified, "other@example.org",
+                                              &trust_certifications);
+  if (rc != 0 || trust_certifications == NULL ||
+      strstr(trust_certifications, "\t1\t120") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_certify_userid_with_trust did not record the "
+            "trust signature: rc=%" PRId32 " listing=%s\n",
+            rc, trust_certifications ? trust_certifications : "(null)");
+    free(trust_certifications);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(introducer);
+    pgp_certificate_free(trust_certified);
+    return 1;
+  }
+  free(trust_certifications);
+  pgp_certificate_free(introducer);
+  pgp_certificate_free(trust_certified);
+
   struct Certificate *with_new_uid = NULL;
   rc = pgp_certificate_add_userid(cert, "merged@example.org", &with_new_uid);
   if (rc != 0 || with_new_uid == NULL) {

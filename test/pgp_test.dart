@@ -507,6 +507,39 @@ void main() {
       bob.dispose();
     });
 
+    test(
+        'certifyUserIdWithTrust records trust depth and amount in '
+        'userIdCertifications', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserIdWithTrust(
+        bob,
+        'bob@example.org',
+        trustDepth: 1,
+        trustAmount: 120,
+      );
+      final certifications = certified.userIdCertifications('bob@example.org');
+      expect(certifications, hasLength(1));
+      expect(certifications.first.fingerprint, alice.fingerprint());
+      expect(certifications.first.trustDepth, 1);
+      expect(certifications.first.trustAmount, 120);
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('certifyUserId (plain) records zero trust depth and amount', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      final certifications = certified.userIdCertifications('bob@example.org');
+      expect(certifications.first.trustDepth, 0);
+      expect(certifications.first.trustAmount, 0);
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
     test('userIdCertifications is empty for an uncertified user ID', () {
       final cert = pgp.generateKey('someone@example.org');
       expect(cert.userIdCertifications('someone@example.org'), isEmpty);

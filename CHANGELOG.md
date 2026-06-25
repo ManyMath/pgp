@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Added `Certificate.certifyUserIdWithTrust`, a trust-signature variant of
+  `certifyUserId` that records an RFC 4880 Trust Signature (delegation
+  depth and confidence amount) on the certification, letting a certifier
+  be trusted to introduce other trusted certifiers. `userIdCertifications`
+  now also reports `trustDepth`/`trustAmount` on every `CertifierInfo`
+  (both `0` for a plain `certifyUserId` certification).
+
 - Added designated-revoker support (RFC 4880's `gpg --edit-key addrevoker`
   mechanism): `Certificate.addDesignatedRevoker` authorizes another
   certificate to revoke this one on its behalf (a recovery path for a lost

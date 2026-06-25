@@ -1548,6 +1548,96 @@ pub unsafe extern "C" fn pgp_certificate_certify_userid(
     FFIError::Ok as i32
 }
 
+/// Like `pgp_certificate_certify_userid`, but attaches an RFC 4880 Trust
+/// Signature subpacket recording delegated trust rather than plain direct
+/// certification: the mechanism that lets a certifier be trusted not just
+/// to vouch for a user ID, but to introduce *other* trusted certifiers
+/// (a certificate authority hierarchy), the piece `certify_userid` alone
+/// cannot express. `trust_depth` is the RFC 4880 trust level (0 = the
+/// signer isn't trusted to certify further; 1 = the signer is a trusted
+/// introducer whose own certifications should be honored; 2+ = the signer
+/// can in turn designate further trusted introducers at depth-1). `trust_amount`
+/// is the degree of confidence out of 255 (120 conventionally means "fully
+/// trusted", 60 "marginally trusted" per the usual "three marginals make one
+/// full" web-of-trust convention: but this library does not itself
+/// interpret either value, only records and later reports them via
+/// `pgp_certificate_userid_certifications`). Otherwise behaves exactly like
+/// `pgp_certificate_certify_userid`: writes an updated copy of `target_cert`
+/// to `*new_cert`, which is itself left unmodified.
+///
+/// # Safety
+/// `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be
+/// non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_certify_userid_with_trust(
+    signing_cert: *const Certificate,
+    target_cert: *const Certificate,
+    user_id: *const libc::c_char,
+    trust_depth: u8,
+    trust_amount: u8,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if signing_cert.is_null()
+        || target_cert.is_null()
+        || user_id.is_null()
+        || new_cert.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let signing_wrapper = &*signing_cert;
+    let target_wrapper = &*target_cert;
+    if signing_wrapper.0.is_null() || target_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let signing_cert = &*signing_wrapper.0;
+    let target_cert = (&*target_wrapper.0).clone();
+
+    let user_id_str = match CStr::from_ptr(user_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let target_uid = match target_cert
+        .userids()
+        .find(|ua| ua.userid().value() == user_id_str.as_bytes())
+    {
+        Some(ua) => ua.userid().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+
+    let mut signer = match signing_cert.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig_builder = match sequoia_openpgp::packet::signature::SignatureBuilder::new(
+        sequoia_openpgp::types::SignatureType::GenericCertification,
+    )
+    .set_trust_signature(trust_depth, trust_amount)
+    {
+        Ok(b) => b,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let sig = match target_uid.bind(&mut signer, &target_cert, sig_builder) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match target_cert.insert_packets(vec![sig]) {
+        Ok((c, _)) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 /// Have `signing_cert` revoke its own earlier third-party certification of
 /// `user_id` on `target_cert` (the counterpart to
 /// `pgp_certificate_certify_userid`), writing the updated copy of
@@ -2016,17 +2106,22 @@ pub unsafe extern "C" fn pgp_certificate_set_primary_userid(
 }
 
 /// Return one line per distinct third-party certifier of `user_id`:
-/// `issuer_fingerprint\trevoked`, where `issuer_fingerprint` is the
-/// certifying key's fingerprint (from `pgp_certificate_certify_userid`) and
-/// `revoked` is `1` if that certifier has since revoked their certification
-/// via `pgp_certificate_revoke_userid_certification` (`0` otherwise).
-/// `pgp_certificate_userids_info` only reports self-signature state
-/// (primary/revoked/expiry); this is the third-party-certification
-/// counterpart. Reports what's attached to the certificate as-is: it does
-/// not cryptographically re-verify each signature against the issuer's key
-/// (the issuer's certificate isn't available here), matching the trust
-/// model of every other inspection function in this module. Returns
-/// NotFound if `user_id` is not present on `cert`.
+/// `issuer_fingerprint\trevoked\ttrust_depth\ttrust_amount`, where
+/// `issuer_fingerprint` is the certifying key's fingerprint (from
+/// `pgp_certificate_certify_userid`/`_with_trust`) and `revoked` is `1` if
+/// that certifier has since revoked their certification via
+/// `pgp_certificate_revoke_userid_certification` (`0` otherwise).
+/// `trust_depth`/`trust_amount` are the RFC 4880 Trust Signature subpacket
+/// values set via `pgp_certificate_certify_userid_with_trust` (both `0` for
+/// a plain `pgp_certificate_certify_userid` certification, which carries no
+/// such subpacket). `pgp_certificate_userids_info` only reports
+/// self-signature state (primary/revoked/expiry); this is the
+/// third-party-certification counterpart. Reports what's attached to the
+/// certificate as-is: it does not cryptographically re-verify each
+/// signature against the issuer's key (the issuer's certificate isn't
+/// available here), matching the trust model of every other inspection
+/// function in this module. Returns NotFound if `user_id` is not present on
+/// `cert`.
 /// Caller must free `*out` with `free()`.
 ///
 /// # Safety
@@ -2068,11 +2163,15 @@ pub unsafe extern "C" fn pgp_certificate_userid_certifications(
     let mut seen = std::collections::HashSet::new();
     let mut lines = Vec::new();
     for sig in ua.certifications() {
+        let (trust_depth, trust_amount) = sig.trust_signature().unwrap_or((0, 0));
         for fp in sig.issuer_fingerprints() {
             let fp_hex = fp.to_hex();
             if seen.insert(fp_hex.clone()) {
                 let revoked = revoked_fingerprints.contains(&fp_hex);
-                lines.push(format!("{}\t{}", fp_hex, revoked as u8));
+                lines.push(format!(
+                    "{}\t{}\t{}\t{}",
+                    fp_hex, revoked as u8, trust_depth, trust_amount
+                ));
             }
         }
     }
@@ -5865,6 +5964,139 @@ mod tests {
     }
 
     #[test]
+    fn certify_userid_with_trust_attaches_trust_signature() {
+        unsafe {
+            let alice = generate_cert("alice-trust@example.org");
+            let bob = generate_cert("bob-trust@example.org");
+            let user_id = CString::new("bob-trust@example.org").unwrap();
+
+            let mut alice_fp: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_fingerprint(alice, &mut alice_fp),
+                FFIError::Ok as i32
+            );
+            let alice_fp = to_owned_c_string(alice_fp);
+
+            let mut certified: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_certify_userid_with_trust(
+                    alice,
+                    bob,
+                    user_id.as_ptr(),
+                    1,
+                    120,
+                    &mut certified,
+                ),
+                FFIError::Ok as i32
+            );
+            assert!(!certified.is_null());
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userid_certifications(
+                    certified,
+                    user_id.as_ptr(),
+                    &mut listing
+                ),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let fields: Vec<&str> = listing_str.lines().next().unwrap().split('\t').collect();
+            assert_eq!(fields[0], alice_fp);
+            assert_eq!(fields[1], "0");
+            assert_eq!(fields[2], "1");
+            assert_eq!(fields[3], "120");
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(certified);
+        }
+    }
+
+    #[test]
+    fn certify_userid_with_trust_rejects_missing_user_id() {
+        unsafe {
+            let alice = generate_cert("alice-trust-missing@example.org");
+            let bob = generate_cert("bob-trust-missing@example.org");
+            let missing = CString::new("nobody@example.org").unwrap();
+            let mut certified: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_certify_userid_with_trust(
+                    alice,
+                    bob,
+                    missing.as_ptr(),
+                    1,
+                    120,
+                    &mut certified,
+                ),
+                FFIError::NotFound as i32
+            );
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn certify_userid_with_trust_rejects_null_args() {
+        unsafe {
+            let alice = generate_cert("alice-trust-null@example.org");
+            let bob = generate_cert("bob-trust-null@example.org");
+            let user_id = CString::new("bob-trust-null@example.org").unwrap();
+            let mut certified: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_certify_userid_with_trust(
+                    ptr::null(),
+                    bob,
+                    user_id.as_ptr(),
+                    1,
+                    120,
+                    &mut certified,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_certify_userid_with_trust(
+                    alice,
+                    ptr::null(),
+                    user_id.as_ptr(),
+                    1,
+                    120,
+                    &mut certified,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_certify_userid_with_trust(
+                    alice,
+                    bob,
+                    ptr::null(),
+                    1,
+                    120,
+                    &mut certified,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_certify_userid_with_trust(
+                    alice,
+                    bob,
+                    user_id.as_ptr(),
+                    1,
+                    120,
+                    ptr::null_mut(),
+                ),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
     fn revoke_userid_certification_attaches_revocation_signature() {
         unsafe {
             let alice = generate_cert("alice-revoker@example.org");
@@ -6471,6 +6703,8 @@ mod tests {
             let fields: Vec<&str> = lines[0].split('\t').collect();
             assert_eq!(fields[0], alice_fp);
             assert_eq!(fields[1], "0"); // not yet revoked
+            assert_eq!(fields[2], "0"); // no trust signature
+            assert_eq!(fields[3], "0");
 
             let mut revoked: *mut Certificate = ptr::null_mut();
             assert_eq!(

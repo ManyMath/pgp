@@ -388,6 +388,35 @@ int32_t pgp_certificate_certify_userid(const struct Certificate *signing_cert,
                                        struct Certificate **new_cert);
 
 /**
+ * Like `pgp_certificate_certify_userid`, but attaches an RFC 4880 Trust
+ * Signature subpacket recording delegated trust rather than plain direct
+ * certification: the mechanism that lets a certifier be trusted not just
+ * to vouch for a user ID, but to introduce *other* trusted certifiers
+ * (a certificate authority hierarchy), the piece `certify_userid` alone
+ * cannot express. `trust_depth` is the RFC 4880 trust level (0 = the
+ * signer isn't trusted to certify further; 1 = the signer is a trusted
+ * introducer whose own certifications should be honored; 2+ = the signer
+ * can in turn designate further trusted introducers at depth-1). `trust_amount`
+ * is the degree of confidence out of 255 (120 conventionally means "fully
+ * trusted", 60 "marginally trusted" per the usual "three marginals make one
+ * full" web-of-trust convention: but this library does not itself
+ * interpret either value, only records and later reports them via
+ * `pgp_certificate_userid_certifications`). Otherwise behaves exactly like
+ * `pgp_certificate_certify_userid`: writes an updated copy of `target_cert`
+ * to `*new_cert`, which is itself left unmodified.
+ *
+ * # Safety
+ * `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be
+ * non-null.
+ */
+int32_t pgp_certificate_certify_userid_with_trust(const struct Certificate *signing_cert,
+                                                  const struct Certificate *target_cert,
+                                                  const char *user_id,
+                                                  uint8_t trust_depth,
+                                                  uint8_t trust_amount,
+                                                  struct Certificate **new_cert);
+
+/**
  * Have `signing_cert` revoke its own earlier third-party certification of
  * `user_id` on `target_cert` (the counterpart to
  * `pgp_certificate_certify_userid`), writing the updated copy of
@@ -504,17 +533,22 @@ int32_t pgp_certificate_set_primary_userid(const struct Certificate *cert,
 
 /**
  * Return one line per distinct third-party certifier of `user_id`:
- * `issuer_fingerprint\trevoked`, where `issuer_fingerprint` is the
- * certifying key's fingerprint (from `pgp_certificate_certify_userid`) and
- * `revoked` is `1` if that certifier has since revoked their certification
- * via `pgp_certificate_revoke_userid_certification` (`0` otherwise).
- * `pgp_certificate_userids_info` only reports self-signature state
- * (primary/revoked/expiry); this is the third-party-certification
- * counterpart. Reports what's attached to the certificate as-is: it does
- * not cryptographically re-verify each signature against the issuer's key
- * (the issuer's certificate isn't available here), matching the trust
- * model of every other inspection function in this module. Returns
- * NotFound if `user_id` is not present on `cert`.
+ * `issuer_fingerprint\trevoked\ttrust_depth\ttrust_amount`, where
+ * `issuer_fingerprint` is the certifying key's fingerprint (from
+ * `pgp_certificate_certify_userid`/`_with_trust`) and `revoked` is `1` if
+ * that certifier has since revoked their certification via
+ * `pgp_certificate_revoke_userid_certification` (`0` otherwise).
+ * `trust_depth`/`trust_amount` are the RFC 4880 Trust Signature subpacket
+ * values set via `pgp_certificate_certify_userid_with_trust` (both `0` for
+ * a plain `pgp_certificate_certify_userid` certification, which carries no
+ * such subpacket). `pgp_certificate_userids_info` only reports
+ * self-signature state (primary/revoked/expiry); this is the
+ * third-party-certification counterpart. Reports what's attached to the
+ * certificate as-is: it does not cryptographically re-verify each
+ * signature against the issuer's key (the issuer's certificate isn't
+ * available here), matching the trust model of every other inspection
+ * function in this module. Returns NotFound if `user_id` is not present on
+ * `cert`.
  * Caller must free `*out` with `free()`.
  *
  * # Safety

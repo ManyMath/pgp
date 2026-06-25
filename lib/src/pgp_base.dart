@@ -179,9 +179,21 @@ class CertifierInfo {
   /// [Certificate.revokeUserIdCertification].
   final bool isRevoked;
 
+  /// The RFC 4880 Trust Signature "level" (depth) recorded via
+  /// [Certificate.certifyUserIdWithTrust], or 0 if this certification
+  /// carries no trust signature (e.g. a plain [Certificate.certifyUserId]).
+  final int trustDepth;
+
+  /// The RFC 4880 Trust Signature "trust amount" (degree of confidence, out
+  /// of 255) recorded via [Certificate.certifyUserIdWithTrust], or 0 if this
+  /// certification carries no trust signature.
+  final int trustAmount;
+
   const CertifierInfo({
     required this.fingerprint,
     required this.isRevoked,
+    this.trustDepth = 0,
+    this.trustAmount = 0,
   });
 }
 
@@ -688,6 +700,41 @@ class Certificate {
     }
   }
 
+  /// Like [certifyUserId], but records an RFC 4880 Trust Signature:
+  /// delegated trust rather than plain direct certification, letting the
+  /// certifier be trusted not just to vouch for a user ID, but to introduce
+  /// *other* trusted certifiers (a certificate-authority hierarchy).
+  ///
+  /// [trustDepth] is the RFC 4880 trust level (0 = not trusted to certify
+  /// further; 1 = a trusted introducer; 2+ = can designate further trusted
+  /// introducers). [trustAmount] is the degree of confidence out of 255 (120
+  /// conventionally means "fully trusted", 60 "marginally trusted"). This
+  /// library records and reports both values via [userIdCertifications] but
+  /// does not itself interpret them.
+  ///
+  /// Throws [PgpException] if [userId] isn't present on [target] or if this
+  /// certificate's certification-capable secret key isn't available.
+  Certificate certifyUserIdWithTrust(
+    Certificate target,
+    String userId, {
+    required int trustDepth,
+    required int trustAmount,
+  }) {
+    final userIdPointer = userId.toNativeUtf8();
+    try {
+      return _derive(
+          (out) => _bindings.pgp_certificate_certify_userid_with_trust(
+              _ptr,
+              target._ptr,
+              userIdPointer.cast(),
+              trustDepth,
+              trustAmount,
+              out));
+    } finally {
+      calloc.free(userIdPointer);
+    }
+  }
+
   /// Revokes this certificate's own earlier third-party certification of
   /// [userId] on [target]: the counterpart to [certifyUserId]: returning
   /// an updated copy of [target] carrying this certificate's
@@ -831,6 +878,8 @@ class Certificate {
         return CertifierInfo(
           fingerprint: fields[0],
           isRevoked: fields[1] == '1',
+          trustDepth: int.parse(fields[2]),
+          trustAmount: int.parse(fields[3]),
         );
       }).toList();
     } finally {
