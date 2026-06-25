@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Add `Certificate.certifyUserId(target, userId)`, a third-party
+  certification primitive: certify another certificate's user ID with this
+  certificate's key ("Alice vouches that this user ID belongs to Bob"),
+  returning an updated copy of `target` carrying the new certification
+  signature. `target` itself is left unmodified. This is the missing
+  web-of-trust building block: previously `Certificate.addUserId` could only
+  self-certify, with no way to attach a certification from a different key.
 - Add `Certificate.setSubkeyExpiry(index, Duration?)` to update a single
   subkey's expiration independently of the primary key's and other subkeys'.
   `Certificate.subkeys` now reports each subkey's own `expiryEpoch` (plus
