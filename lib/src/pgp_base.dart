@@ -322,10 +322,7 @@ class Certificate {
     final messagePointer = message?.toNativeUtf8();
     try {
       return _derive((out) => _bindings.pgp_certificate_revoke(
-          _ptr,
-          reason.code,
-          messagePointer?.cast() ?? nullptr,
-          out));
+          _ptr, reason.code, messagePointer?.cast() ?? nullptr, out));
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
     }
@@ -340,8 +337,8 @@ class Certificate {
       _derive((out) => _bindings.pgp_certificate_add_signing_subkey(_ptr, out));
 
   /// Adds an authentication subkey, returning the updated certificate.
-  Certificate addAuthenticationSubkey() => _derive((out) =>
-      _bindings.pgp_certificate_add_authentication_subkey(_ptr, out));
+  Certificate addAuthenticationSubkey() => _derive(
+      (out) => _bindings.pgp_certificate_add_authentication_subkey(_ptr, out));
 
   /// Revokes the subkey at [index] (counting subkeys only), returning the
   /// updated certificate.
@@ -356,11 +353,7 @@ class Certificate {
     final messagePointer = message?.toNativeUtf8();
     try {
       return _derive((out) => _bindings.pgp_certificate_revoke_subkey(
-          _ptr,
-          index,
-          reason.code,
-          messagePointer?.cast() ?? nullptr,
-          out));
+          _ptr, index, reason.code, messagePointer?.cast() ?? nullptr, out));
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
     }
@@ -438,8 +431,8 @@ class Certificate {
     final userIdPointer = userId.toNativeUtf8();
     final messagePointer = message?.toNativeUtf8();
     try {
-      return _derive(
-          (out) => _bindings.pgp_certificate_revoke_userid_certification(
+      return _derive((out) =>
+          _bindings.pgp_certificate_revoke_userid_certification(
               _ptr,
               target._ptr,
               userIdPointer.cast(),
@@ -450,6 +443,23 @@ class Certificate {
       calloc.free(userIdPointer);
       if (messagePointer != null) calloc.free(messagePointer);
     }
+  }
+
+  /// Merges updates from [other] into this certificate: new signatures,
+  /// certifications, subkeys, and revocations: returning the combined
+  /// certificate. This is the counterpart to importing a refreshed copy of a
+  /// certificate (e.g. fetched from a keyserver or received from a peer)
+  /// without discarding what's already known locally.
+  ///
+  /// [other] must have the same primary-key fingerprint as this certificate;
+  /// secret key material on [other] is always discarded, so only this
+  /// certificate's own secret key (if any) survives into the result. Neither
+  /// this certificate nor [other] is modified.
+  ///
+  /// Throws [PgpException] if [other] is not the same certificate as this one.
+  Certificate merge(Certificate other) {
+    return _derive(
+        (out) => _bindings.pgp_certificate_merge(_ptr, other._ptr, out));
   }
 
   /// Returns the primary key fingerprint as a 40-character uppercase hex string.
@@ -642,7 +652,8 @@ class Certificate {
     final passphrasePtr = passphrase.toNativeUtf8();
     try {
       return _derive(
-        (out) => _bindings.pgp_certificate_unlock(_ptr, passphrasePtr.cast(), out),
+        (out) =>
+            _bindings.pgp_certificate_unlock(_ptr, passphrasePtr.cast(), out),
       );
     } finally {
       calloc.free(passphrasePtr);
@@ -662,7 +673,8 @@ class Certificate {
     final passphrasePtr = passphrase.toNativeUtf8();
     try {
       return _derive(
-        (out) => _bindings.pgp_certificate_lock(_ptr, passphrasePtr.cast(), out),
+        (out) =>
+            _bindings.pgp_certificate_lock(_ptr, passphrasePtr.cast(), out),
       );
     } finally {
       calloc.free(passphrasePtr);
@@ -673,8 +685,9 @@ class Certificate {
   /// [Certificate]. Pass null to clear the expiry (keys become permanent).
   /// The receiver is unchanged and must be disposed separately.
   Certificate setExpiry(Duration? validity) {
-    final secs =
-        (validity == null || validity == Duration.zero) ? 0 : validity.inSeconds;
+    final secs = (validity == null || validity == Duration.zero)
+        ? 0
+        : validity.inSeconds;
     return _derive(
         (out) => _bindings.pgp_certificate_set_expiry(_ptr, secs, out));
   }
@@ -685,10 +698,11 @@ class Certificate {
   /// are left untouched. Pass null to clear that subkey's expiry.
   /// The receiver is unchanged and must be disposed separately.
   Certificate setSubkeyExpiry(int index, Duration? validity) {
-    final secs =
-        (validity == null || validity == Duration.zero) ? 0 : validity.inSeconds;
-    return _derive((out) => _bindings.pgp_certificate_set_subkey_expiry(
-        _ptr, index, secs, out));
+    final secs = (validity == null || validity == Duration.zero)
+        ? 0
+        : validity.inSeconds;
+    return _derive((out) =>
+        _bindings.pgp_certificate_set_subkey_expiry(_ptr, index, secs, out));
   }
 
   /// Encrypts [data] bytes to this certificate, returning an ASCII-armored
@@ -898,8 +912,7 @@ class PGP {
       List<Certificate> recipients, String plaintext) {
     if (recipients.isEmpty) throw PgpException(-4); // FFIError::NotFound
 
-    final certsArray =
-        calloc<Pointer<ffi.Certificate>>(recipients.length);
+    final certsArray = calloc<Pointer<ffi.Certificate>>(recipients.length);
     for (var i = 0; i < recipients.length; i++) {
       certsArray[i] = recipients[i].pointer;
     }
@@ -1056,10 +1069,11 @@ class PGP {
     final userIdPtr = userId.toNativeUtf8();
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
-      final secs =
-          (validity == null || validity == Duration.zero) ? 0 : validity.inSeconds;
-      final code = _bindings.pgp_key_generate_with_expiry(
-          userIdPtr.cast(), secs, out);
+      final secs = (validity == null || validity == Duration.zero)
+          ? 0
+          : validity.inSeconds;
+      final code =
+          _bindings.pgp_key_generate_with_expiry(userIdPtr.cast(), secs, out);
       if (code != 0) throw PgpException(code);
       return Certificate._(out.value);
     } finally {

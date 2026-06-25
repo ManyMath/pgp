@@ -188,12 +188,12 @@ void main() {
 
     test('subkeys agrees with revokeSubkey indexing', () {
       final cert = pgp.generateKey('someone@example.org');
-      final encryptionSubkey =
-          cert.subkeys().firstWhere((s) => s.canEncrypt);
+      final encryptionSubkey = cert.subkeys().firstWhere((s) => s.canEncrypt);
 
       final revoked = cert.revokeSubkey(encryptionSubkey.index);
-      final revokedInfo =
-          revoked.subkeys().firstWhere((s) => s.index == encryptionSubkey.index);
+      final revokedInfo = revoked
+          .subkeys()
+          .firstWhere((s) => s.index == encryptionSubkey.index);
       expect(revokedInfo.isRevoked, isTrue);
 
       revoked.dispose();
@@ -369,6 +369,39 @@ void main() {
     });
   });
 
+  group('merge', () {
+    test('merge pulls in a new user ID added to a copy of the same cert', () {
+      final cert = pgp.generateKey('merge-base@example.org');
+      final withExtra = cert.addUserId('merge-extra@example.org');
+      final merged = cert.merge(withExtra);
+      expect(merged.userIds(), contains('merge-extra@example.org'));
+      merged.dispose();
+      withExtra.dispose();
+      cert.dispose();
+    });
+
+    test('merge leaves both input certificates unmodified', () {
+      final cert = pgp.generateKey('merge-unmodified@example.org');
+      final withExtra = cert.addUserId('merge-unmodified-extra@example.org');
+      cert.merge(withExtra).dispose();
+      expect(cert.userIds(),
+          isNot(contains('merge-unmodified-extra@example.org')));
+      withExtra.dispose();
+      cert.dispose();
+    });
+
+    test('merge throws for two unrelated certificates', () {
+      final alice = pgp.generateKey('merge-alice@example.org');
+      final bob = pgp.generateKey('merge-bob@example.org');
+      expect(
+        () => alice.merge(bob),
+        throwsA(isA<PgpException>().having((e) => e.code, 'code', -3)),
+      );
+      alice.dispose();
+      bob.dispose();
+    });
+  });
+
   group('user ID inspection', () {
     test('userIdsInfo reports the generated user ID as primary and unrevoked',
         () {
@@ -390,8 +423,10 @@ void main() {
       final infos = updated.userIdsInfo();
 
       expect(infos, hasLength(2));
-      final primary = infos.firstWhere((i) => i.userId == 'someone@example.org');
-      final secondary = infos.firstWhere((i) => i.userId == 'other@example.org');
+      final primary =
+          infos.firstWhere((i) => i.userId == 'someone@example.org');
+      final secondary =
+          infos.firstWhere((i) => i.userId == 'other@example.org');
       expect(primary.isPrimary, isTrue);
       expect(secondary.isPrimary, isFalse);
 
@@ -405,7 +440,8 @@ void main() {
       final revoked = withUser.revokeUserId('other@example.org');
 
       final infos = revoked.userIdsInfo();
-      final revokedInfo = infos.firstWhere((i) => i.userId == 'other@example.org');
+      final revokedInfo =
+          infos.firstWhere((i) => i.userId == 'other@example.org');
       expect(revokedInfo.isRevoked, isTrue);
       final primaryInfo =
           infos.firstWhere((i) => i.userId == 'someone@example.org');
@@ -425,7 +461,8 @@ void main() {
       cert.dispose();
     });
 
-    test('generateKeyWithExpiry with Duration.zero behaves like generateKey', () {
+    test('generateKeyWithExpiry with Duration.zero behaves like generateKey',
+        () {
       final cert =
           pgp.generateKeyWithExpiry('alice@example.org', Duration.zero);
       final encrypted = cert.encrypt('hello');
@@ -433,7 +470,8 @@ void main() {
       cert.dispose();
     });
 
-    test('generateKeyWithExpiry with null validity behaves like generateKey', () {
+    test('generateKeyWithExpiry with null validity behaves like generateKey',
+        () {
       final cert = pgp.generateKeyWithExpiry('alice@example.org', null);
       expect(cert.pointer.address, isNonZero);
       cert.dispose();
@@ -547,8 +585,7 @@ void main() {
 
     test('verifyDetached round-trips through a public certificate', () {
       final cert = pgp.generateKey('someone@example.org');
-      final pub =
-          pgp.certificateFromArmored(cert.exportPublicArmored());
+      final pub = pgp.certificateFromArmored(cert.exportPublicArmored());
       const plain = 'hello detached OpenPGP';
       final sig = cert.signDetached(plain);
       expect(pub.verifyDetached(plain, sig), isTrue);
@@ -596,8 +633,7 @@ void main() {
     test('unlock with correct passphrase enables decrypt', () {
       final locked = pgp.generateLockedKey('locked@example.org', 'hunter2');
       final unlocked = locked.unlock('hunter2');
-      final pub =
-          pgp.certificateFromArmored(locked.exportPublicArmored());
+      final pub = pgp.certificateFromArmored(locked.exportPublicArmored());
       final cipher = pub.encrypt('secret message');
       expect(unlocked.decrypt(cipher), 'secret message');
       pub.dispose();
@@ -617,8 +653,7 @@ void main() {
 
     test('unlock on public-only cert throws PgpException(-4)', () {
       final cert = pgp.generateKey('someone@example.org');
-      final pub =
-          pgp.certificateFromArmored(cert.exportPublicArmored());
+      final pub = pgp.certificateFromArmored(cert.exportPublicArmored());
       expect(
         () => pub.unlock('anypassphrase'),
         throwsA(isA<PgpException>().having((e) => e.code, 'code', -4)),
@@ -628,11 +663,9 @@ void main() {
     });
 
     test('unlock then sign produces a verifiable message', () {
-      final locked =
-          pgp.generateLockedKey('signer@example.org', 's3cr3t');
+      final locked = pgp.generateLockedKey('signer@example.org', 's3cr3t');
       final unlocked = locked.unlock('s3cr3t');
-      final pub =
-          pgp.certificateFromArmored(locked.exportPublicArmored());
+      final pub = pgp.certificateFromArmored(locked.exportPublicArmored());
       final signed = unlocked.sign('authenticated text');
       expect(pub.verify(signed), 'authenticated text');
       pub.dispose();
@@ -661,8 +694,7 @@ void main() {
       cert.dispose();
     });
 
-    test('unlock after lock with wrong passphrase throws PgpException(-2)',
-        () {
+    test('unlock after lock with wrong passphrase throws PgpException(-2)', () {
       final cert = pgp.generateKey('lockable@example.org');
       final locked = cert.lock('correcthorse');
       expect(
@@ -697,8 +729,7 @@ void main() {
     test('fingerprint is stable across export/import round-trip', () {
       final cert = pgp.generateKey('alice@example.org');
       final fp1 = cert.fingerprint();
-      final parsed =
-          pgp.certificateFromArmored(cert.exportPublicArmored());
+      final parsed = pgp.certificateFromArmored(cert.exportPublicArmored());
       final fp2 = parsed.fingerprint();
       expect(fp1, fp2);
       parsed.dispose();
@@ -1001,7 +1032,8 @@ void main() {
       );
     });
 
-    test('encryptSymmetric output is different each time (random session key)', () {
+    test('encryptSymmetric output is different each time (random session key)',
+        () {
       const plain = 'same message';
       const pass = 'same pass';
       final c1 = PGP.encryptSymmetric(plain, pass);
@@ -1021,12 +1053,10 @@ void main() {
     test('encrypts to two recipients, each can decrypt', () {
       final alice = pgp.generateKey('alice@example.org');
       final bob = pgp.generateKey('bob@example.org');
-      final alicePub =
-          pgp.certificateFromArmored(alice.exportPublicArmored());
+      final alicePub = pgp.certificateFromArmored(alice.exportPublicArmored());
       final bobPub = pgp.certificateFromArmored(bob.exportPublicArmored());
 
-      final cipher =
-          PGP.encryptToRecipients([alicePub, bobPub], 'hello both');
+      final cipher = PGP.encryptToRecipients([alicePub, bobPub], 'hello both');
       expect(cipher, contains('-----BEGIN PGP MESSAGE-----'));
       expect(alice.decrypt(cipher), 'hello both');
       expect(bob.decrypt(cipher), 'hello both');
@@ -1078,8 +1108,7 @@ void main() {
       final alice = pgp.generateKey('alice@example.org');
       final bob = pgp.generateKey('bob@example.org');
       final eve = pgp.generateKey('eve@example.org');
-      final alicePub =
-          pgp.certificateFromArmored(alice.exportPublicArmored());
+      final alicePub = pgp.certificateFromArmored(alice.exportPublicArmored());
       final bobPub = pgp.certificateFromArmored(bob.exportPublicArmored());
 
       final cipher = PGP.encryptToRecipients([alicePub, bobPub], 'secret');

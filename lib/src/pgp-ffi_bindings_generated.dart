@@ -1444,6 +1444,44 @@ class PgpFfiBindings {
       _pgp_decrypt_string_symmetricPtr.asFunction<
           int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
+  /// Merge updates from `other_cert` into `base_cert`: new signatures,
+  /// certifications, subkeys, and revocations: writing the combined
+  /// certificate to `*new_cert`. This is the counterpart to importing a
+  /// refreshed copy of a certificate (e.g. from a keyserver or a peer) without
+  /// discarding what's already known locally: any packet present in either
+  /// input ends up in the result, and duplicate signatures are collapsed by
+  /// Sequoia's own merge logic rather than blindly concatenated.
+  ///
+  /// Both certificates must have the same primary-key fingerprint; merging two
+  /// unrelated certificates fails with `Failed` (-3). Secret key material on
+  /// `other_cert` is always discarded: this operation is meant for importing
+  /// data from a source that shouldn't be trusted with key material: so only
+  /// `base_cert`'s own secret key (if any) survives into `*new_cert`. Neither
+  /// input certificate is modified.
+  /// Caller must free `*new_cert` with `pgp_certificate_free`.
+  ///
+  /// # Safety
+  /// `base_cert`, `other_cert`, and `new_cert` must be non-null.
+  int pgp_certificate_merge(
+    ffi.Pointer<Certificate> base_cert,
+    ffi.Pointer<Certificate> other_cert,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_merge(
+      base_cert,
+      other_cert,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_mergePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>>('pgp_certificate_merge');
+  late final _pgp_certificate_merge = _pgp_certificate_mergePtr.asFunction<
+      int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<Certificate>>)>();
 }
 
 final class Certificate extends ffi.Opaque {}
