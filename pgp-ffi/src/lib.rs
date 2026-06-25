@@ -3035,6 +3035,53 @@ pub unsafe extern "C" fn pgp_decrypt_string_symmetric(
     write_c_string(&text, plaintext_out)
 }
 
+/// Merge updates from `other_cert` into `base_cert`: new signatures,
+/// certifications, subkeys, and revocations: writing the combined
+/// certificate to `*new_cert`. This is the counterpart to importing a
+/// refreshed copy of a certificate (e.g. from a keyserver or a peer) without
+/// discarding what's already known locally: any packet present in either
+/// input ends up in the result, and duplicate signatures are collapsed by
+/// Sequoia's own merge logic rather than blindly concatenated.
+///
+/// Both certificates must have the same primary-key fingerprint; merging two
+/// unrelated certificates fails with `Failed` (-3). Secret key material on
+/// `other_cert` is always discarded: this operation is meant for importing
+/// data from a source that shouldn't be trusted with key material: so only
+/// `base_cert`'s own secret key (if any) survives into `*new_cert`. Neither
+/// input certificate is modified.
+/// Caller must free `*new_cert` with `pgp_certificate_free`.
+///
+/// # Safety
+/// `base_cert`, `other_cert`, and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_merge(
+    base_cert: *const Certificate,
+    other_cert: *const Certificate,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if base_cert.is_null() || other_cert.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let base_wrapper = &*base_cert;
+    let other_wrapper = &*other_cert;
+    if base_wrapper.0.is_null() || other_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let base = (&*base_wrapper.0).clone();
+    let other = (&*other_wrapper.0).clone();
+
+    let merged = match base.merge_public(other) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(merged));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4777,6 +4824,106 @@ mod tests {
             );
 
             pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn merge_pulls_in_new_userid_from_other() {
+        unsafe {
+            let base = generate_cert("merge-base@example.org");
+            let extra_user_id = CString::new("merge-extra@example.org").unwrap();
+
+            let mut with_extra: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_userid(base, extra_user_id.as_ptr(), &mut with_extra),
+                FFIError::Ok as i32
+            );
+
+            let mut merged: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_merge(base, with_extra, &mut merged),
+                FFIError::Ok as i32
+            );
+            assert!(!merged.is_null());
+
+            let merged_cert = &*(&*merged).0;
+            assert!(merged_cert
+                .userids()
+                .any(|ua| ua.userid().value() == b"merge-extra@example.org"));
+
+            pgp_certificate_free(base);
+            pgp_certificate_free(with_extra);
+            pgp_certificate_free(merged);
+        }
+    }
+
+    #[test]
+    fn merge_preserves_base_secret_key_material() {
+        unsafe {
+            let base = generate_cert("merge-secret@example.org");
+            let extra_user_id = CString::new("merge-secret-extra@example.org").unwrap();
+
+            let mut with_extra: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_userid(base, extra_user_id.as_ptr(), &mut with_extra),
+                FFIError::Ok as i32
+            );
+
+            let mut merged: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_merge(base, with_extra, &mut merged),
+                FFIError::Ok as i32
+            );
+
+            let merged_cert = &*(&*merged).0;
+            assert!(merged_cert.primary_key().key().has_secret());
+
+            pgp_certificate_free(base);
+            pgp_certificate_free(with_extra);
+            pgp_certificate_free(merged);
+        }
+    }
+
+    #[test]
+    fn merge_rejects_unrelated_certificates() {
+        unsafe {
+            let alice = generate_cert("merge-alice@example.org");
+            let bob = generate_cert("merge-bob@example.org");
+
+            let mut merged: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_merge(alice, bob, &mut merged),
+                FFIError::Failed as i32
+            );
+            assert!(merged.is_null());
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn merge_rejects_null_args() {
+        unsafe {
+            let base = generate_cert("merge-null@example.org");
+            let other = generate_cert("merge-null-other@example.org");
+            let mut merged: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_merge(ptr::null(), other, &mut merged),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_merge(base, ptr::null(), &mut merged),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_merge(base, other, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(base);
+            pgp_certificate_free(other);
         }
     }
 }

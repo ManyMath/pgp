@@ -620,4 +620,28 @@ int32_t pgp_decrypt_string_symmetric(const char *armored_message,
                                      const char *passphrase,
                                      char **plaintext_out);
 
+/**
+ * Merge updates from `other_cert` into `base_cert`: new signatures,
+ * certifications, subkeys, and revocations: writing the combined
+ * certificate to `*new_cert`. This is the counterpart to importing a
+ * refreshed copy of a certificate (e.g. from a keyserver or a peer) without
+ * discarding what's already known locally: any packet present in either
+ * input ends up in the result, and duplicate signatures are collapsed by
+ * Sequoia's own merge logic rather than blindly concatenated.
+ *
+ * Both certificates must have the same primary-key fingerprint; merging two
+ * unrelated certificates fails with `Failed` (-3). Secret key material on
+ * `other_cert` is always discarded: this operation is meant for importing
+ * data from a source that shouldn't be trusted with key material: so only
+ * `base_cert`'s own secret key (if any) survives into `*new_cert`. Neither
+ * input certificate is modified.
+ * Caller must free `*new_cert` with `pgp_certificate_free`.
+ *
+ * # Safety
+ * `base_cert`, `other_cert`, and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_merge(const struct Certificate *base_cert,
+                              const struct Certificate *other_cert,
+                              struct Certificate **new_cert);
+
 #endif  /* pgp_ffi_h */

@@ -127,6 +127,41 @@ int main(void) {
   free(alice_fp);
   pgp_certificate_free(alice);
 
+  struct Certificate *with_new_uid = NULL;
+  rc = pgp_certificate_add_userid(cert, "merged@example.org", &with_new_uid);
+  if (rc != 0 || with_new_uid == NULL) {
+    fprintf(stderr, "pgp_certificate_add_userid (merge prep) failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  struct Certificate *merged = NULL;
+  rc = pgp_certificate_merge(cert, with_new_uid, &merged);
+  if (rc != 0 || merged == NULL) {
+    fprintf(stderr, "pgp_certificate_merge failed: rc=%" PRId32 "\n", rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(with_new_uid);
+    return 1;
+  }
+  pgp_certificate_free(with_new_uid);
+
+  char *merged_userids = NULL;
+  rc = pgp_certificate_userids(merged, &merged_userids);
+  if (rc != 0 || merged_userids == NULL ||
+      strstr(merged_userids, "merged@example.org") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_merge did not pull in the new user ID: %s\n",
+            merged_userids ? merged_userids : "(null)");
+    if (merged_userids != NULL) free(merged_userids);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(merged);
+    return 1;
+  }
+  free(merged_userids);
+  pgp_certificate_free(merged);
+
   updated = NULL;
   rc = pgp_certificate_add_transport_encryption_subkey(cert, &updated);
   if (rc != 0 || updated == NULL) {
