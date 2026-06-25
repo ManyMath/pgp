@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Added `SessionKeyInfo.algorithm`, a typed `SymmetricAlgorithmPreference?`
+  view of `SessionKeyInfo.algo` (the existing raw RFC 4880 algorithm code,
+  left unchanged), matching every other algorithm-code field in the package
+  already having a typed enum. Returns `null` for a code the enum doesn't
+  cover instead of throwing.
+
 - Added `PGP.encryptToRecipientsFile(recipients, inputPath, outputPath)`, the
   multi-recipient counterpart to `Certificate.encryptFile` (which only
   supported a single recipient): the one file-based entry point missing from

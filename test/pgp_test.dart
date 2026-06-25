@@ -1566,6 +1566,8 @@ void main() {
       final sessionKey = cert.sessionKey(cipher);
       expect(sessionKey.hex, isNotEmpty);
       expect(sessionKey.algo, isNonZero);
+      expect(sessionKey.algorithm, isNotNull);
+      expect(sessionKey.algorithm!.code, sessionKey.algo);
 
       final plaintext = PGP.decryptWithSessionKey(sessionKey, cipher);
       expect(plaintext, 'session key test payload');

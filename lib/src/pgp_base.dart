@@ -384,6 +384,16 @@ class SessionKeyInfo {
   /// for. Pass straight through to [PGP.decryptWithSessionKey].
   final int algo;
 
+  /// [algo] as a typed [SymmetricAlgorithmPreference], or `null` if it's a
+  /// code that enum doesn't cover (e.g. the legacy IDEA cipher, code `1`).
+  /// [algo] itself always carries the raw code either way.
+  SymmetricAlgorithmPreference? get algorithm {
+    for (final value in SymmetricAlgorithmPreference.values) {
+      if (value.code == algo) return value;
+    }
+    return null;
+  }
+
   const SessionKeyInfo({
     required this.hex,
     required this.algo,
