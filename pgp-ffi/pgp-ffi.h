@@ -84,6 +84,22 @@ int32_t pgp_certificate_encrypt_string(const struct Certificate *cert,
                                        char **armored_message);
 
 /**
+ * List the recipient key IDs an ASCII-armored encrypted message is
+ * addressed to, without decrypting it and without needing any secret key
+ * material: reads each top-level PKESK packet's recipient key ID. Returns
+ * one 16-character uppercase hex key ID per line (RFC 4880 key IDs are the
+ * low 64 bits of a fingerprint, not a full fingerprint); a hidden/wildcard
+ * recipient (RFC 4880 section 5.1) is reported as the literal string `hidden`.
+ * Useful for a multi-key client to determine which of its keys, if any,
+ * could plausibly decrypt a message before attempting to do so.
+ * Caller must free `*out` with `free()`.
+ *
+ * # Safety
+ * `armored_message` and `out` must be non-null.
+ */
+int32_t pgp_message_recipient_key_ids(const char *armored_message, char **out);
+
+/**
  * Decrypt an ASCII-armored message using the certificate and write plaintext to
  * `*plaintext`. Caller must free `*plaintext` with `free()`.
  *

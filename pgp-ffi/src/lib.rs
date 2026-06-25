@@ -496,6 +496,52 @@ pub unsafe extern "C" fn pgp_certificate_encrypt_string(
     write_c_string(&armored, armored_message)
 }
 
+/// List the recipient key IDs an ASCII-armored encrypted message is
+/// addressed to, without decrypting it and without needing any secret key
+/// material: reads each top-level PKESK packet's recipient key ID. Returns
+/// one 16-character uppercase hex key ID per line (RFC 4880 key IDs are the
+/// low 64 bits of a fingerprint, not a full fingerprint); a hidden/wildcard
+/// recipient (RFC 4880 section 5.1) is reported as the literal string `hidden`.
+/// Useful for a multi-key client to determine which of its keys, if any,
+/// could plausibly decrypt a message before attempting to do so.
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `armored_message` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_message_recipient_key_ids(
+    armored_message: *const libc::c_char,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if armored_message.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+    let pile = match sequoia_openpgp::PacketPile::from_bytes(armored_bytes) {
+        Ok(p) => p,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let lines: Vec<String> = pile
+        .children()
+        .filter_map(|packet| match packet {
+            sequoia_openpgp::Packet::PKESK(pkesk) => {
+                let recipient = pkesk.recipient();
+                if recipient.is_wildcard() {
+                    Some("hidden".to_string())
+                } else {
+                    Some(recipient.to_hex())
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    let joined = lines.join("\n");
+    write_c_string(&joined, out)
+}
+
 /// Decrypt an ASCII-armored message using the certificate and write plaintext to
 /// `*plaintext`. Caller must free `*plaintext` with `free()`.
 ///
@@ -4186,6 +4232,76 @@ mod tests {
             assert_eq!(to_owned_c_string(recovered), "hello from a rust test");
 
             pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn message_recipient_key_ids_reports_transport_encryption_subkey() {
+        unsafe {
+            let cert = generate_cert("recipient-key-ids@example.org");
+            let plaintext = CString::new("hello").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_encrypt_string(cert, plaintext.as_ptr(), &mut cipher),
+                FFIError::Ok as i32
+            );
+
+            let mut subkeys: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(cert, &mut subkeys),
+                FFIError::Ok as i32
+            );
+            let subkeys_str = to_owned_c_string(subkeys);
+            let encryption_fp = subkeys_str
+                .lines()
+                .find(|l| l.split('\t').nth(2).unwrap().contains("encryption"))
+                .unwrap()
+                .split('\t')
+                .nth(1)
+                .unwrap()
+                .to_string();
+            let expected_key_id = &encryption_fp[encryption_fp.len() - 16..];
+
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_message_recipient_key_ids(cipher, &mut out),
+                FFIError::Ok as i32
+            );
+            let recipients = to_owned_c_string(out);
+            assert_eq!(recipients.lines().count(), 1);
+            assert_eq!(recipients.lines().next().unwrap(), expected_key_id);
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn message_recipient_key_ids_rejects_garbage_input() {
+        unsafe {
+            let garbage = CString::new("not a message").unwrap();
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_message_recipient_key_ids(garbage.as_ptr(), &mut out),
+                FFIError::Invalid as i32
+            );
+            assert!(out.is_null());
+        }
+    }
+
+    #[test]
+    fn message_recipient_key_ids_rejects_null_args() {
+        unsafe {
+            let msg = CString::new("placeholder").unwrap();
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_message_recipient_key_ids(ptr::null(), &mut out),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_message_recipient_key_ids(msg.as_ptr(), ptr::null_mut()),
+                FFIError::Null as i32
+            );
         }
     }
 

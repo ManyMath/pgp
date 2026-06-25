@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Add `PGP.messageRecipientKeyIds(armoredMessage)`, listing the recipient
+  key IDs an encrypted message is addressed to (or `"hidden"` for a
+  wildcard recipient) without decrypting it or needing any secret key
+  material: useful for a multi-key client to pick which of its keys can
+  open a message before attempting decryption.
 - `SignedPlaintext` and `VerifiedBytes` gain a `signedAtEpoch` field (plus
   `hasSignedAt`/`signedAtDate` getters), populated by `verifyWithSigner`,
   `verifyBytesWithSigner`, `verifyCleartextWithSigner`, `decryptAndVerify`,

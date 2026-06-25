@@ -454,6 +454,34 @@ int main(void) {
   free(symmetric_signed);
   free(symmetric_plaintext);
   free(symmetric_signer_fp);
+
+  char *recipient_message = NULL;
+  rc = pgp_certificate_encrypt_string(symmetric_signer, "hello recipient",
+                                       &recipient_message);
+  if (rc != 0 || recipient_message == NULL) {
+    fprintf(stderr, "pgp_certificate_encrypt_string failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(symmetric_signer);
+    return 1;
+  }
+
+  char *recipient_key_ids = NULL;
+  rc = pgp_message_recipient_key_ids(recipient_message, &recipient_key_ids);
+  if (rc != 0 || recipient_key_ids == NULL ||
+      strlen(recipient_key_ids) != 16) {
+    fprintf(stderr,
+            "pgp_message_recipient_key_ids failed: rc=%" PRId32
+            " key_ids=%s\n",
+            rc, recipient_key_ids ? recipient_key_ids : "(null)");
+    free(recipient_message);
+    if (recipient_key_ids != NULL) free(recipient_key_ids);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(symmetric_signer);
+    return 1;
+  }
+  free(recipient_message);
+  free(recipient_key_ids);
   pgp_certificate_free(symmetric_signer);
 
   char *armored = NULL;

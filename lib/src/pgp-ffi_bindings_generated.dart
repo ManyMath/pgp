@@ -218,6 +218,38 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// List the recipient key IDs an ASCII-armored encrypted message is
+  /// addressed to, without decrypting it and without needing any secret key
+  /// material: reads each top-level PKESK packet's recipient key ID. Returns
+  /// one 16-character uppercase hex key ID per line (RFC 4880 key IDs are the
+  /// low 64 bits of a fingerprint, not a full fingerprint); a hidden/wildcard
+  /// recipient (RFC 4880 section 5.1) is reported as the literal string `hidden`.
+  /// Useful for a multi-key client to determine which of its keys, if any,
+  /// could plausibly decrypt a message before attempting to do so.
+  /// Caller must free `*out` with `free()`.
+  ///
+  /// # Safety
+  /// `armored_message` and `out` must be non-null.
+  int pgp_message_recipient_key_ids(
+    ffi.Pointer<ffi.Char> armored_message,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> out,
+  ) {
+    return _pgp_message_recipient_key_ids(
+      armored_message,
+      out,
+    );
+  }
+
+  late final _pgp_message_recipient_key_idsPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_message_recipient_key_ids');
+  late final _pgp_message_recipient_key_ids =
+      _pgp_message_recipient_key_idsPtr.asFunction<
+          int Function(
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
   /// Decrypt an ASCII-armored message using the certificate and write plaintext to
   /// `*plaintext`. Caller must free `*plaintext` with `free()`.
   ///

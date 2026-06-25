@@ -1229,6 +1229,45 @@ void main() {
     });
   });
 
+  group('messageRecipientKeyIds', () {
+    test('reports the transport-encryption subkey key ID', () {
+      final cert = pgp.generateKey('recipient-key-ids@example.org');
+      final cipher = cert.encrypt('hello');
+      final encryptionSubkey =
+          cert.subkeys().firstWhere((s) => s.canEncrypt);
+      final expectedKeyId =
+          encryptionSubkey.fingerprint.substring(24); // last 16 hex chars
+
+      final keyIds = PGP.messageRecipientKeyIds(cipher);
+      expect(keyIds, [expectedKeyId]);
+
+      cert.dispose();
+    });
+
+    test('reports one key ID per recipient', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final alicePub = pgp.certificateFromArmored(alice.exportPublicArmored());
+      final bobPub = pgp.certificateFromArmored(bob.exportPublicArmored());
+
+      final cipher = PGP.encryptToRecipients([alicePub, bobPub], 'hello both');
+      final keyIds = PGP.messageRecipientKeyIds(cipher);
+      expect(keyIds, hasLength(2));
+
+      alicePub.dispose();
+      bobPub.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('throws for invalid input', () {
+      expect(
+        () => PGP.messageRecipientKeyIds('not a message'),
+        throwsA(isA<PgpException>()),
+      );
+    });
+  });
+
   group('encryptToRecipients', () {
     test('encrypts to two recipients, each can decrypt', () {
       final alice = pgp.generateKey('alice@example.org');

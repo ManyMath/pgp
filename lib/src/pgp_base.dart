@@ -1185,6 +1185,31 @@ class Certificate {
 }
 
 class PGP {
+  /// Lists the recipient key IDs [armoredMessage] is addressed to, without
+  /// decrypting it and without needing any secret key material: reads each
+  /// top-level PKESK packet's recipient key ID off the message. Each entry
+  /// is a 16-character uppercase hex key ID (the low 64 bits of a
+  /// fingerprint, not a full fingerprint), or the literal string `"hidden"`
+  /// for a hidden/wildcard recipient. Useful for a multi-key client to
+  /// determine which of its keys, if any, could plausibly decrypt a message
+  /// before attempting to do so.
+  ///
+  /// Throws [PgpException] if [armoredMessage] isn't a valid OpenPGP message.
+  static List<String> messageRecipientKeyIds(String armoredMessage) {
+    final msgPtr = armoredMessage.toNativeUtf8();
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_message_recipient_key_ids(msgPtr.cast(), out);
+      if (code != 0) throw PgpException(code);
+      final raw = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      return raw.isEmpty ? [] : raw.split('\n');
+    } finally {
+      calloc.free(msgPtr);
+      calloc.free(out);
+    }
+  }
+
   /// Encrypts [plaintext] to every certificate in [recipients], returning a
   /// single ASCII-armored OpenPGP message that any recipient can decrypt.
   ///
