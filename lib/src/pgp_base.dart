@@ -602,6 +602,26 @@ class Certificate {
     }
   }
 
+  /// Encrypts all currently-unencrypted secret key material with
+  /// [passphrase], returning a new [Certificate] with locked secrets: the
+  /// counterpart to [unlock]. Keys that are already passphrase-protected are
+  /// left as-is, so calling [lock] again with a different passphrase does
+  /// *not* rotate the passphrase on already-locked keys; call [unlock] first
+  /// to rotate an existing passphrase.
+  ///
+  /// Throws [PgpException] with code -4 if this certificate carries no
+  /// secret material.
+  Certificate lock(String passphrase) {
+    final passphrasePtr = passphrase.toNativeUtf8();
+    try {
+      return _derive(
+        (out) => _bindings.pgp_certificate_lock(_ptr, passphrasePtr.cast(), out),
+      );
+    } finally {
+      calloc.free(passphrasePtr);
+    }
+  }
+
   /// Updates the expiry on every key in this certificate, returning a new
   /// [Certificate]. Pass null to clear the expiry (keys become permanent).
   /// The receiver is unchanged and must be disposed separately.

@@ -598,6 +598,42 @@ void main() {
       same.dispose();
       cert.dispose();
     });
+
+    test('lock then unlock round-trips with the same passphrase', () {
+      final cert = pgp.generateKey('lockable@example.org');
+      final locked = cert.lock('hunter2');
+      final unlocked = locked.unlock('hunter2');
+      final pub = pgp.certificateFromArmored(cert.exportPublicArmored());
+      final cipher = pub.encrypt('secret message');
+      expect(unlocked.decrypt(cipher), 'secret message');
+      pub.dispose();
+      unlocked.dispose();
+      locked.dispose();
+      cert.dispose();
+    });
+
+    test('unlock after lock with wrong passphrase throws PgpException(-2)',
+        () {
+      final cert = pgp.generateKey('lockable@example.org');
+      final locked = cert.lock('correcthorse');
+      expect(
+        () => locked.unlock('wrongpassphrase'),
+        throwsA(isA<PgpException>().having((e) => e.code, 'code', -2)),
+      );
+      locked.dispose();
+      cert.dispose();
+    });
+
+    test('lock on public-only cert throws PgpException(-4)', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final pub = pgp.certificateFromArmored(cert.exportPublicArmored());
+      expect(
+        () => pub.lock('anypassphrase'),
+        throwsA(isA<PgpException>().having((e) => e.code, 'code', -4)),
+      );
+      pub.dispose();
+      cert.dispose();
+    });
   });
 
   group('certificate inspection', () {
