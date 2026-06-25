@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Add `Certificate.userIdCertifications(userId)`, returning a `CertifierInfo`
+  per third-party certificate that has certified `userId` (fingerprint plus
+  whether that certification has since been revoked): the inspection
+  counterpart to `certifyUserId`/`revokeUserIdCertification`, which
+  `userIdsInfo` didn't cover (it only reports self-signature state).
 - Add `Certificate.lock(passphrase)`, the counterpart to `Certificate.unlock`:
   encrypts all currently-unencrypted secret key material with `passphrase`.
   Keys that are already passphrase-protected are left untouched; call
