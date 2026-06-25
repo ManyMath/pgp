@@ -12,10 +12,10 @@ use sequoia_openpgp::{
     },
     packet::{PKESK, SKESK, UserID as SequoiaUserID},
     policy::{Policy, StandardPolicy},
-    serialize::stream::{Armorer, Encryptor2, LiteralWriter, Message, Signer},
+    serialize::stream::{Armorer, Encryptor, LiteralWriter, Message, Signer},
     serialize::Serialize,
     types::{KeyFlags, ReasonForRevocation, RevocationStatus, SymmetricAlgorithm},
-    Fingerprint, KeyHandle, Result,
+    KeyHandle, Result,
 };
 use std::ffi::CStr;
 use std::io::{Cursor, Read, Write};
@@ -96,7 +96,7 @@ impl VerificationHelper for VerifyHelper<'_> {
             match layer {
                 MessageLayer::SignatureGroup { results } if index == 0 => {
                     if let Some(good_checksum) = results.into_iter().flatten().next() {
-                        self.signer_fp = Some(good_checksum.ka.fingerprint().to_hex());
+                        self.signer_fp = Some(good_checksum.ka.key().fingerprint().to_hex());
                         self.signature_creation_epoch = good_checksum
                             .sig
                             .signature_creation_time()
@@ -130,16 +130,13 @@ impl VerificationHelper for DecryptOnlyHelper<'_> {
 }
 
 impl DecryptionHelper for DecryptOnlyHelper<'_> {
-    fn decrypt<D>(
+    fn decrypt(
         &mut self,
         pkesks: &[PKESK],
         _skesks: &[SKESK],
         sym_algo: Option<SymmetricAlgorithm>,
-        mut decrypt: D,
-    ) -> Result<Option<Fingerprint>>
-    where
-        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
-    {
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> Result<Option<SequoiaCert>> {
         let keys = self
             .secret
             .keys()
@@ -160,7 +157,7 @@ impl DecryptionHelper for DecryptOnlyHelper<'_> {
                     .map(|(algo, session_key)| decrypt(algo, &session_key))
                     .unwrap_or(false)
                 {
-                    return Ok(Some(key.fingerprint()));
+                    return Ok(Some(self.secret.clone()));
                 }
             }
         }
@@ -473,7 +470,7 @@ pub unsafe extern "C" fn pgp_certificate_encrypt_string(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Encryptor2::for_recipients(message, recipients).build() {
+    let message = match Encryptor::for_recipients(message, recipients).build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -528,11 +525,15 @@ pub unsafe extern "C" fn pgp_message_recipient_key_ids(
         .children()
         .filter_map(|packet| match packet {
             sequoia_openpgp::Packet::PKESK(pkesk) => {
-                let recipient = pkesk.recipient();
-                if recipient.is_wildcard() {
-                    Some("hidden".to_string())
-                } else {
-                    Some(recipient.to_hex())
+                match pkesk.recipient() {
+                    None => Some("hidden".to_string()),
+                    // `recipient()` may hand back a full `Fingerprint`-based
+                    // `KeyHandle` (e.g. for PKESKv6 packets); normalize to the
+                    // low 64-bit key ID to match this function's documented
+                    // 16-character-hex-key-ID contract.
+                    Some(recipient) => {
+                        Some(sequoia_openpgp::KeyID::from(recipient).to_hex())
+                    }
                 }
             }
             _ => None,
@@ -639,7 +640,11 @@ pub unsafe extern "C" fn pgp_certificate_sign_string(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Signer::new(message, keypair).build() {
+    let signer = match Signer::new(message, keypair) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match signer.build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -791,7 +796,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke(
     };
 
     let updated = match cert.insert_packets(sig) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -959,7 +964,7 @@ pub unsafe extern "C" fn pgp_certificate_apply_revocation_armored(
     };
 
     let updated = match sequoia_cert.insert_packets(sig) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -1143,7 +1148,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke_subkey(
     };
 
     let updated = match cert.insert_packets(sig) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -1193,11 +1198,11 @@ pub unsafe extern "C" fn pgp_certificate_add_userid(
     };
 
     let updated = match cert.insert_packets(vec![uid]) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
     let updated = match updated.insert_packets(vec![sig]) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -1268,7 +1273,7 @@ pub unsafe extern "C" fn pgp_certificate_certify_userid(
     };
 
     let updated = match target_cert.insert_packets(vec![sig]) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -1356,7 +1361,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke_userid_certification(
     };
 
     let updated = match target_cert.insert_packets(sig) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -1432,7 +1437,7 @@ pub unsafe extern "C" fn pgp_encrypt_string_to_recipients(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Encryptor2::for_recipients(message, recipients).build() {
+    let message = match Encryptor::for_recipients(message, recipients).build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -1519,7 +1524,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke_userid(
     };
 
     let updated = match cert.insert_packets(sig) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -1735,7 +1740,7 @@ pub unsafe extern "C" fn pgp_certificate_set_primary_userid(
     };
 
     let updated = match sequoia_cert.insert_packets(vec![sequoia_openpgp::Packet::from(sig)]) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -1790,7 +1795,7 @@ pub unsafe extern "C" fn pgp_certificate_userid_certifications(
     };
 
     let revoked_fingerprints: std::collections::HashSet<String> = ua
-        .other_revocations2()
+        .other_revocations()
         .flat_map(|sig| sig.issuer_fingerprints().map(|fp| fp.to_hex()))
         .collect();
 
@@ -2090,7 +2095,7 @@ pub unsafe extern "C" fn pgp_certificate_unlock(
     }
 
     let updated = match sequoia_cert.insert_packets(packets) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -2161,7 +2166,7 @@ pub unsafe extern "C" fn pgp_certificate_lock(
     }
 
     let updated = match sequoia_cert.insert_packets(packets) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -2219,7 +2224,11 @@ pub unsafe extern "C" fn pgp_certificate_sign_detached(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let mut message = match Signer::new(message, keypair).detached().build() {
+    let signer = match Signer::new(message, keypair) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match signer.detached().build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -2474,7 +2483,7 @@ pub unsafe extern "C" fn pgp_certificate_set_expiry(
     }
 
     let updated = match sequoia_cert.insert_packets(all_sigs) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -2590,7 +2599,7 @@ pub unsafe extern "C" fn pgp_certificate_set_subkey_expiry(
     let packets: Vec<sequoia_openpgp::Packet> =
         sigs.into_iter().map(sequoia_openpgp::Packet::from).collect();
     let updated = match sequoia_cert.insert_packets(packets) {
-        Ok(c) => c,
+        Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
     };
 
@@ -2617,7 +2626,7 @@ impl VerificationHelper for DecryptAndVerifyHelper<'_> {
         for layer in structure {
             if let MessageLayer::SignatureGroup { results } = layer {
                 if let Some(good) = results.into_iter().flatten().next() {
-                    self.signer_fp = Some(good.ka.fingerprint().to_hex());
+                    self.signer_fp = Some(good.ka.key().fingerprint().to_hex());
                     self.signature_creation_epoch = good
                         .sig
                         .signature_creation_time()
@@ -2636,16 +2645,13 @@ impl VerificationHelper for DecryptAndVerifyHelper<'_> {
 }
 
 impl DecryptionHelper for DecryptAndVerifyHelper<'_> {
-    fn decrypt<D>(
+    fn decrypt(
         &mut self,
         pkesks: &[PKESK],
         _skesks: &[SKESK],
         sym_algo: Option<SymmetricAlgorithm>,
-        mut decrypt: D,
-    ) -> Result<Option<Fingerprint>>
-    where
-        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
-    {
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> Result<Option<SequoiaCert>> {
         let keys = self
             .decrypt_cert
             .keys()
@@ -2666,7 +2672,7 @@ impl DecryptionHelper for DecryptAndVerifyHelper<'_> {
                     .map(|(algo, session_key)| decrypt(algo, &session_key))
                     .unwrap_or(false)
                 {
-                    return Ok(Some(key.fingerprint()));
+                    return Ok(Some(self.decrypt_cert.clone()));
                 }
             }
         }
@@ -2767,11 +2773,15 @@ pub unsafe extern "C" fn pgp_encrypt_and_sign_string(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Encryptor2::for_recipients(message, recipients).build() {
+    let message = match Encryptor::for_recipients(message, recipients).build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Signer::new(message, keypair).build() {
+    let signer = match Signer::new(message, keypair) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match signer.build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -2944,7 +2954,7 @@ pub unsafe extern "C" fn pgp_certificate_encrypt_bytes(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Encryptor2::for_recipients(message, recipients).build() {
+    let message = match Encryptor::for_recipients(message, recipients).build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -3077,7 +3087,11 @@ pub unsafe extern "C" fn pgp_certificate_sign_bytes(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Signer::new(message, keypair).build() {
+    let signer = match Signer::new(message, keypair) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match signer.build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -3250,7 +3264,7 @@ pub unsafe extern "C" fn pgp_encrypt_bytes_to_recipients(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Encryptor2::for_recipients(message, recipients).build() {
+    let message = match Encryptor::for_recipients(message, recipients).build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -3321,7 +3335,11 @@ pub unsafe extern "C" fn pgp_certificate_sign_cleartext(
     let mut out = Vec::new();
     let message = Message::new(&mut out);
     // Cleartext mode: no Armorer, no LiteralWriter - write directly to Signer.
-    let mut signer = match Signer::new(message, keypair).cleartext().build() {
+    let signer = match Signer::new(message, keypair) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut signer = match signer.cleartext().build() {
         Ok(s) => s,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -3435,16 +3453,13 @@ impl VerificationHelper for SymmetricDecryptHelper {
 }
 
 impl DecryptionHelper for SymmetricDecryptHelper {
-    fn decrypt<D>(
+    fn decrypt(
         &mut self,
         _pkesks: &[PKESK],
         skesks: &[SKESK],
         _sym_algo: Option<SymmetricAlgorithm>,
-        mut decrypt: D,
-    ) -> Result<Option<Fingerprint>>
-    where
-        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
-    {
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> Result<Option<SequoiaCert>> {
         for skesk in skesks {
             if let Ok((algo, session_key)) = skesk.decrypt(&self.password) {
                 if decrypt(algo, &session_key) {
@@ -3486,7 +3501,7 @@ pub unsafe extern "C" fn pgp_encrypt_string_symmetric(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Encryptor2::with_passwords(message, Some(password)).build() {
+    let message = match Encryptor::with_passwords(message, Some(password)).build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -3574,7 +3589,7 @@ impl VerificationHelper for SymmetricDecryptAndVerifyHelper<'_> {
         for layer in structure {
             if let MessageLayer::SignatureGroup { results } = layer {
                 if let Some(good) = results.into_iter().flatten().next() {
-                    self.signer_fp = Some(good.ka.fingerprint().to_hex());
+                    self.signer_fp = Some(good.ka.key().fingerprint().to_hex());
                     self.signature_creation_epoch = good
                         .sig
                         .signature_creation_time()
@@ -3593,16 +3608,13 @@ impl VerificationHelper for SymmetricDecryptAndVerifyHelper<'_> {
 }
 
 impl DecryptionHelper for SymmetricDecryptAndVerifyHelper<'_> {
-    fn decrypt<D>(
+    fn decrypt(
         &mut self,
         _pkesks: &[PKESK],
         skesks: &[SKESK],
         _sym_algo: Option<SymmetricAlgorithm>,
-        mut decrypt: D,
-    ) -> Result<Option<Fingerprint>>
-    where
-        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
-    {
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> Result<Option<SequoiaCert>> {
         for skesk in skesks {
             if let Ok((algo, session_key)) = skesk.decrypt(&self.password) {
                 if decrypt(algo, &session_key) {
@@ -3676,11 +3688,15 @@ pub unsafe extern "C" fn pgp_encrypt_and_sign_string_symmetric(
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Encryptor2::with_passwords(message, Some(password)).build() {
+    let message = match Encryptor::with_passwords(message, Some(password)).build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
-    let message = match Signer::new(message, keypair).build() {
+    let signer = match Signer::new(message, keypair) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match signer.build() {
         Ok(m) => m,
         Err(_) => return FFIError::Failed as i32,
     };
@@ -3917,7 +3933,7 @@ mod tests {
 
             let sequoia_cert = &*(&*cert).0;
             assert_eq!(
-                sequoia_cert.primary_key().pk_algo(),
+                sequoia_cert.primary_key().key().pk_algo(),
                 sequoia_openpgp::types::PublicKeyAlgorithm::RSAEncryptSign
             );
 
@@ -3938,7 +3954,7 @@ mod tests {
 
             let sequoia_cert = &*(&*cert).0;
             assert_eq!(
-                sequoia_cert.primary_key().pk_algo(),
+                sequoia_cert.primary_key().key().pk_algo(),
                 sequoia_openpgp::types::PublicKeyAlgorithm::EdDSA
             );
 
@@ -4309,7 +4325,7 @@ mod tests {
                 .clone();
 
             let algo = SymmetricAlgorithm::AES256;
-            let session_key = SessionKey::new(32);
+            let session_key = SessionKey::new(32).unwrap();
             let mut pkesk = sequoia_openpgp::packet::PKESK::V3(
                 sequoia_openpgp::packet::pkesk::PKESK3::for_recipient(
                     algo,
@@ -4319,7 +4335,7 @@ mod tests {
                 .unwrap(),
             );
             if let sequoia_openpgp::packet::PKESK::V3(ref mut pkesk3) = pkesk {
-                pkesk3.set_recipient(sequoia_openpgp::KeyID::wildcard());
+                pkesk3.set_recipient(None);
             }
 
             let mut bytes = Vec::new();
@@ -5636,7 +5652,7 @@ mod tests {
             );
 
             let revocation = ua
-                .other_revocations2()
+                .other_revocations()
                 .find(|sig| sig.issuer_fingerprints().any(|fp| fp.to_hex() == alice_fp))
                 .expect("certification-revocation signature from alice not found");
             assert_eq!(
@@ -5684,7 +5700,7 @@ mod tests {
                 .userids()
                 .find(|ua| ua.userid().value() == b"bob-revokee-untouched@example.org")
                 .unwrap();
-            assert_eq!(ua.other_revocations2().count(), 0);
+            assert_eq!(ua.other_revocations().count(), 0);
 
             pgp_certificate_free(alice);
             pgp_certificate_free(bob);
@@ -6368,7 +6384,7 @@ mod tests {
             assert!(sig.issuer_fingerprints().next().is_none());
             assert!(sig.issuers().next().is_some());
 
-            let updated = bob_cert.insert_packets(vec![sig]).unwrap();
+            let (updated, _) = bob_cert.insert_packets(vec![sig]).unwrap();
             let inner = Box::into_raw(Box::new(updated));
             let certified = Box::into_raw(Box::new(Certificate(inner)));
 

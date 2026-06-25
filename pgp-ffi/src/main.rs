@@ -5,7 +5,7 @@ use sequoia_openpgp as openpgp;
 use crate::openpgp::cert::prelude::*;
 use crate::openpgp::crypto::SessionKey;
 use crate::openpgp::types::SymmetricAlgorithm;
-use crate::openpgp::serialize::stream::{Armorer, Message, Encryptor2, LiteralWriter};
+use crate::openpgp::serialize::stream::{Armorer, Message, Encryptor, LiteralWriter};
 use crate::openpgp::parse::{Parse, stream::*};
 use crate::openpgp::policy::Policy;
 use crate::openpgp::policy::StandardPolicy as P;
@@ -91,7 +91,7 @@ fn encrypt(
     let message = Message::new(sink);
 
     // We want to encrypt a literal data packet.
-    let message = Encryptor2::for_recipients(message, recipients).build()?;
+    let message = Encryptor::for_recipients(message, recipients).build()?;
 
     // Emit a literal data packet.
     let mut message = LiteralWriter::new(message).build()?;
@@ -151,16 +151,13 @@ impl<'a> VerificationHelper for Helper<'a> {
 }
 
 impl<'a> DecryptionHelper for Helper<'a> {
-    fn decrypt<D>(
+    fn decrypt(
         &mut self,
         pkesks: &[openpgp::packet::PKESK],
         _skesks: &[openpgp::packet::SKESK],
         sym_algo: Option<SymmetricAlgorithm>,
-        mut decrypt: D,
-    ) -> openpgp::Result<Option<openpgp::Fingerprint>>
-    where
-        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
-    {
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> openpgp::Result<Option<openpgp::Cert>> {
         let key = self
             .secret
             .keys()
@@ -179,6 +176,6 @@ impl<'a> DecryptionHelper for Helper<'a> {
             .decrypt(&mut pair, sym_algo)
             .map(|(algo, session_key)| decrypt(algo, &session_key));
 
-        Ok(Some(self.secret.fingerprint()))
+        Ok(Some(self.secret.clone()))
     }
 }

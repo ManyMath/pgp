@@ -16,7 +16,7 @@ name = "pgp_ffi"
 path = "src/main.rs"
 
 [dependencies]
-sequoia-openpgp = { version = "1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
+sequoia-openpgp = { version = "2", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
 libc = "0.2"
 anyhow = "1"
 
