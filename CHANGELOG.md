@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Add `Certificate.setSubkeyExpiry(index, Duration?)` to update a single
+  subkey's expiration independently of the primary key's and other subkeys'.
+  `Certificate.subkeys` now reports each subkey's own `expiryEpoch` (plus
+  `hasExpiry`/`expiryDate` getters).
 - `Certificate.verify`, `verifyDetached`, `verifyBytes`, and `verifyCleartext`
   gain `...WithSigner`/`verifyDetachedSigner` counterparts that also return
   the fingerprint of the subkey that produced the signature (`verifyBytes`'s
