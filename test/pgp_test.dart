@@ -318,6 +318,55 @@ void main() {
       alice.dispose();
       bob.dispose();
     });
+
+    test(
+        'userIdCertifications reports the certifier as unrevoked after '
+        'certifyUserId', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      final certifications = certified.userIdCertifications('bob@example.org');
+      expect(certifications, hasLength(1));
+      expect(certifications.first.fingerprint, alice.fingerprint());
+      expect(certifications.first.isRevoked, isFalse);
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test(
+        'userIdCertifications reports the certifier as revoked after '
+        'revokeUserIdCertification', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      final revoked =
+          alice.revokeUserIdCertification(certified, 'bob@example.org');
+      final certifications = revoked.userIdCertifications('bob@example.org');
+      expect(certifications, hasLength(1));
+      expect(certifications.first.fingerprint, alice.fingerprint());
+      expect(certifications.first.isRevoked, isTrue);
+      revoked.dispose();
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('userIdCertifications is empty for an uncertified user ID', () {
+      final cert = pgp.generateKey('someone@example.org');
+      expect(cert.userIdCertifications('someone@example.org'), isEmpty);
+      cert.dispose();
+    });
+
+    test('userIdCertifications throws for a user ID not on the certificate',
+        () {
+      final cert = pgp.generateKey('someone@example.org');
+      expect(
+        () => cert.userIdCertifications('nobody@example.org'),
+        throwsA(isA<PgpException>().having((e) => e.code, 'code', -4)),
+      );
+      cert.dispose();
+    });
   });
 
   group('user ID inspection', () {

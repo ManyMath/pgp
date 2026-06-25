@@ -137,6 +137,23 @@ class UserIdInfo {
       : null;
 }
 
+/// A third-party certifier of a user ID, listed by
+/// [Certificate.userIdCertifications].
+class CertifierInfo {
+  /// 40-character uppercase hex fingerprint of the certifying key (the
+  /// certificate that called [Certificate.certifyUserId]).
+  final String fingerprint;
+
+  /// Whether this certifier has since revoked their certification via
+  /// [Certificate.revokeUserIdCertification].
+  final bool isRevoked;
+
+  const CertifierInfo({
+    required this.fingerprint,
+    required this.isRevoked,
+  });
+}
+
 /// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify],
 /// [Certificate.verifyWithSigner], and [Certificate.verifyCleartextWithSigner].
 class SignedPlaintext {
@@ -484,6 +501,36 @@ class Certificate {
         );
       }).toList();
     } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Returns one [CertifierInfo] per distinct certificate that has called
+  /// [certifyUserId] on [userId]: the third-party-certification counterpart
+  /// to [userIdsInfo], which only reports self-signature state. Reports what
+  /// is attached to the certificate as-is, without re-verifying each
+  /// signature against the issuer's own key.
+  ///
+  /// Throws [PgpException] if [userId] isn't present on this certificate.
+  List<CertifierInfo> userIdCertifications(String userId) {
+    final userIdPointer = userId.toNativeUtf8();
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_userid_certifications(
+          _ptr, userIdPointer.cast(), out);
+      if (code != 0) throw PgpException(code);
+      final raw = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      if (raw.isEmpty) return [];
+      return raw.split('\n').map((line) {
+        final fields = line.split('\t');
+        return CertifierInfo(
+          fingerprint: fields[0],
+          isRevoked: fields[1] == '1',
+        );
+      }).toList();
+    } finally {
+      calloc.free(userIdPointer);
       calloc.free(out);
     }
   }
