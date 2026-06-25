@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Add `Certificate.revokeUserIdCertification(target, userId, {reason,
+  message})`, the counterpart to `certifyUserId`: retracts this
+  certificate's earlier third-party certification of `userId` on `target` by
+  attaching a certification-revocation signature. `target` itself is left
+  unmodified.
 - Add `Certificate.addAuthenticationSubkey()`, mirroring
   `addSigningSubkey`/`addTransportEncryptionSubkey` for the third standard
   OpenPGP key-flag role (e.g. PGP-based SSH authentication). `subkeys()` and
