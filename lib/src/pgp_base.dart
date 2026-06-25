@@ -690,6 +690,27 @@ class Certificate {
     }
   }
 
+  /// Cryptographically verifies [issuer]'s third-party certification of
+  /// [userId] on this certificate: [userIdCertifications] only reports
+  /// issuer fingerprints without checking the signature itself; this
+  /// confirms the signature was actually produced by [issuer]'s key.
+  ///
+  /// Throws [PgpException] if [userId] isn't present on this certificate, or
+  /// if no certification issued by [issuer]'s fingerprint is attached.
+  bool verifyUserIdCertification(Certificate issuer, String userId) {
+    final userIdPointer = userId.toNativeUtf8();
+    final out = calloc<Uint8>();
+    try {
+      final code = _bindings.pgp_certificate_verify_userid_certification(
+          _ptr, issuer._ptr, userIdPointer.cast(), out);
+      if (code != 0) throw PgpException(code);
+      return out.value == 1;
+    } finally {
+      calloc.free(userIdPointer);
+      calloc.free(out);
+    }
+  }
+
   /// Returns metadata for every subkey on this certificate, in the same
   /// order (and with the same zero-based indexing) expected by
   /// [revokeSubkey].

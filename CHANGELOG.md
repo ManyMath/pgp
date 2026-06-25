@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Add `Certificate.verifyUserIdCertification(issuer, userId)`,
+  cryptographically confirming that `issuer` actually produced the
+  third-party certification signature `userIdCertifications` reports:
+  previously that listing only reported issuer fingerprints without
+  verifying the signature against the issuer's key.
 - Add `PGP.generateKeyWithCipherSuite(userId, cipherSuite)` and a
   `CipherSuite` enum (`cv25519` (default, matches `generateKey`), `rsa3k`,
   `p256`, `p384`, `p521`, `rsa2k`, `rsa4k`), so certificates can be

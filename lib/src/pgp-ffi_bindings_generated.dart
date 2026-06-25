@@ -928,6 +928,44 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// Cryptographically verify `issuer_cert`'s third-party certification of
+  /// `user_id` on `target_cert` (as listed by
+  /// `pgp_certificate_userid_certifications`, which only reports issuer
+  /// fingerprints without checking the signature itself). Writes `1`/`0` to
+  /// `*out_verified`. Returns NotFound if `user_id` isn't present on
+  /// `target_cert`, or if no certification issued by `issuer_cert`'s
+  /// fingerprint is attached to it.
+  ///
+  /// # Safety
+  /// `target_cert`, `issuer_cert`, `user_id`, and `out_verified` must be
+  /// non-null.
+  int pgp_certificate_verify_userid_certification(
+    ffi.Pointer<Certificate> target_cert,
+    ffi.Pointer<Certificate> issuer_cert,
+    ffi.Pointer<ffi.Char> user_id,
+    ffi.Pointer<ffi.Uint8> out_verified,
+  ) {
+    return _pgp_certificate_verify_userid_certification(
+      target_cert,
+      issuer_cert,
+      user_id,
+      out_verified,
+    );
+  }
+
+  late final _pgp_certificate_verify_userid_certificationPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Uint8>)>>(
+      'pgp_certificate_verify_userid_certification');
+  late final _pgp_certificate_verify_userid_certification =
+      _pgp_certificate_verify_userid_certificationPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>)>();
+
   /// Return one line per subkey:
   /// `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
   /// comma-separated list of capabilities (`encryption`, `signing`), `revoked`

@@ -81,6 +81,20 @@ int main(void) {
   }
   free(certifications);
 
+  uint8_t certification_verified = 0;
+  rc = pgp_certificate_verify_userid_certification(
+      cert, alice, "other@example.org", &certification_verified);
+  if (rc != 0 || certification_verified != 1) {
+    fprintf(stderr,
+            "pgp_certificate_verify_userid_certification failed: rc=%" PRId32
+            " verified=%u\n",
+            rc, certification_verified);
+    free(alice_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+
   updated = NULL;
   rc = pgp_certificate_revoke_userid_certification(
       alice, cert, "other@example.org", 2, "signing key compromised",

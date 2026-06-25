@@ -441,6 +441,36 @@ void main() {
       );
       cert.dispose();
     });
+
+    test('verifyUserIdCertification confirms a genuine certification', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      expect(
+        certified.verifyUserIdCertification(alice, 'bob@example.org'),
+        isTrue,
+      );
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test(
+        'verifyUserIdCertification throws for an issuer that never '
+        'certified', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final mallory = pgp.generateKey('mallory@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      expect(
+        () => certified.verifyUserIdCertification(mallory, 'bob@example.org'),
+        throwsA(isA<PgpException>()),
+      );
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+      mallory.dispose();
+    });
   });
 
   group('merge', () {

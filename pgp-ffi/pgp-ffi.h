@@ -409,6 +409,24 @@ int32_t pgp_certificate_userid_certifications(const struct Certificate *cert,
                                               char **out);
 
 /**
+ * Cryptographically verify `issuer_cert`'s third-party certification of
+ * `user_id` on `target_cert` (as listed by
+ * `pgp_certificate_userid_certifications`, which only reports issuer
+ * fingerprints without checking the signature itself). Writes `1`/`0` to
+ * `*out_verified`. Returns NotFound if `user_id` isn't present on
+ * `target_cert`, or if no certification issued by `issuer_cert`'s
+ * fingerprint is attached to it.
+ *
+ * # Safety
+ * `target_cert`, `issuer_cert`, `user_id`, and `out_verified` must be
+ * non-null.
+ */
+int32_t pgp_certificate_verify_userid_certification(const struct Certificate *target_cert,
+                                                    const struct Certificate *issuer_cert,
+                                                    const char *user_id,
+                                                    uint8_t *out_verified);
+
+/**
  * Return one line per subkey:
  * `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
  * comma-separated list of capabilities (`encryption`, `signing`), `revoked`
