@@ -369,6 +369,30 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
+  /// Add an authentication subkey, writing the updated cert to `*new_cert`.
+  ///
+  /// # Safety
+  /// `cert` and `new_cert` must be non-null.
+  int pgp_certificate_add_authentication_subkey(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_add_authentication_subkey(
+      cert,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_add_authentication_subkeyPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_add_authentication_subkey');
+  late final _pgp_certificate_add_authentication_subkey =
+      _pgp_certificate_add_authentication_subkeyPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
   /// Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
   ///
   /// `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
