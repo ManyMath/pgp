@@ -62,6 +62,72 @@ void main() {
   lockedCert.dispose();
   expiringCert.dispose();
 
+  // Generating a key with a specific algorithm (default is Curve25519).
+  final rsaCert =
+      pgp.generateKeyWithCipherSuite('rsa@example.org', CipherSuite.rsa2k);
+  rsaCert.dispose();
+
+  // Inspecting subkeys and user IDs in detail.
+  var alice = pgp.generateKey('alice@example.org');
+  for (final subkey in alice.subkeys()) {
+    print('subkey ${subkey.fingerprint}: encrypt=${subkey.canEncrypt} '
+        'sign=${subkey.canSign}');
+  }
+  alice = _replace(alice, alice.addUserId('alice-work@example.org'));
+  for (final userId in alice.userIdsInfo()) {
+    print('${userId.userId}: primary=${userId.isPrimary}');
+  }
+  alice = _replace(alice, alice.setPrimaryUserId('alice-work@example.org'));
+
+  // Third-party certification: Bob vouches for one of Alice's user IDs (the
+  // basic web-of-trust building block).
+  var bob = pgp.generateKey('bob@example.org');
+  alice = _replace(alice, bob.certifyUserId(alice, 'alice@example.org'));
+  final certifiers = alice.userIdCertifications('alice@example.org');
+  print('certified by: ${certifiers.map((c) => c.fingerprint)}');
+  print('genuine: ${alice.verifyUserIdCertification(bob, 'alice@example.org')}');
+  alice = _replace(
+      alice, bob.revokeUserIdCertification(alice, 'alice@example.org'));
+  bob.dispose();
+
+  // Merging in updates from another copy of the same certificate (e.g. a
+  // keyserver refresh) without discarding local state.
+  var refreshed = pgp.certificateFromArmored(alice.exportSecretArmored());
+  refreshed =
+      _replace(refreshed, refreshed.addUserId('alice-refreshed@example.org'));
+  alice = _replace(alice, alice.merge(refreshed));
+  refreshed.dispose();
+
+  // Locking (and unlocking) secret key material with a passphrase.
+  final locked = alice.lock('a passphrase');
+  final unlocked = locked.unlock('a passphrase');
+  locked.dispose();
+  unlocked.dispose();
+
+  // Generating a standalone revocation certificate ahead of time (the
+  // `gpg --gen-revoke` workflow) so the key can still be revoked later even
+  // if its secret material is lost.
+  final standaloneRevocation = alice.generateRevocationArmored(
+      reason: RevocationReason.keyCompromised, message: 'lost the key');
+  final revokedViaStandalone =
+      alice.applyRevocationArmored(standaloneRevocation);
+  print('revoked: ${revokedViaStandalone.revocationInfo().isRevoked}');
+  revokedViaStandalone.dispose();
+
+  // Signing and encrypting with a passphrase instead of a recipient key.
+  final signedSymmetric =
+      alice.encryptAndSignSymmetric('hello signed symmetric', 'a passphrase');
+  final verifiedSymmetric =
+      alice.decryptAndVerifySymmetric(signedSymmetric, 'a passphrase');
+  print('${verifiedSymmetric.plaintext} '
+      '(signed at ${verifiedSymmetric.signedAtDate})');
+
+  // Listing who a message is addressed to, without decrypting it.
+  final addressed = alice.encrypt('hello addressed');
+  print('addressed to: ${PGP.messageRecipientKeyIds(addressed)}');
+
+  alice.dispose();
+
   // Key-management methods return a new certificate; dispose the old one.
   cert = _replace(cert, cert.addUserId('other@example.org'));
   cert = _replace(cert, cert.addTransportEncryptionSubkey());
