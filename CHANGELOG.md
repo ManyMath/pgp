@@ -1,4 +1,4 @@
-## Unreleased
+## 0.0.1-dev.8
 
 - Add `PGP.messageRecipientKeyIds(armoredMessage)`, listing the recipient
   key IDs an encrypted message is addressed to (or `"hidden"` for a
