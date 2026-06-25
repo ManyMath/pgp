@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Upgraded the internal `sequoia-openpgp` dependency from 1.22.0 to 2.4.0,
+  fixing RUSTSEC-2025-0136 (a medium-severity integer underflow in AES key
+  unwrapping). Internal dependency bump only: no public Dart API change.
+
 - `Certificate.verifyUserIdCertification` (and the underlying
   `pgp_certificate_verify_userid_certification`) now also matches
   certifications that carry only a legacy bare-key-ID `Issuer` subpacket and
