@@ -972,8 +972,17 @@ class PgpFfiBindings {
   /// `pgp_certificate_userid_certifications`, which only reports issuer
   /// fingerprints without checking the signature itself). Writes `1`/`0` to
   /// `*out_verified`. Returns NotFound if `user_id` isn't present on
-  /// `target_cert`, or if no certification issued by `issuer_cert`'s
-  /// fingerprint is attached to it.
+  /// `target_cert`, or if no certification issued by `issuer_cert` is attached
+  /// to it. Matching prefers the certification signature's `IssuerFingerprint`
+  /// subpacket, but falls back to the legacy bare-key-ID `Issuer` subpacket
+  /// (matched against `issuer_cert`'s own key ID) for certifications that
+  /// carry only that older subpacket and no fingerprint: every certification
+  /// produced by `pgp_certificate_certify_userid` always carries the
+  /// fingerprint subpacket, so this fallback only matters for certifications
+  /// imported from other, older implementations. If `issuer_cert` has
+  /// certified `user_id` more than once, the first matching certification
+  /// (Sequoia's own ordering) is the one verified, matching
+  /// `pgp_certificate_userid_certifications`' listing order.
   ///
   /// # Safety
   /// `target_cert`, `issuer_cert`, `user_id`, and `out_verified` must be

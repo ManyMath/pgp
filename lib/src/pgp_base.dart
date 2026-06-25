@@ -729,7 +729,9 @@ class Certificate {
   /// confirms the signature was actually produced by [issuer]'s key.
   ///
   /// Throws [PgpException] if [userId] isn't present on this certificate, or
-  /// if no certification issued by [issuer]'s fingerprint is attached.
+  /// if no certification issued by [issuer] is attached (matching prefers
+  /// [issuer]'s fingerprint but falls back to a legacy bare key ID for
+  /// certifications from other implementations that only carry that).
   bool verifyUserIdCertification(Certificate issuer, String userId) {
     final userIdPointer = userId.toNativeUtf8();
     final out = calloc<Uint8>();
