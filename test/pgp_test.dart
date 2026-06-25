@@ -275,6 +275,49 @@ void main() {
       alice.dispose();
       bob.dispose();
     });
+
+    test(
+        'revokeUserIdCertification returns an updated certificate after '
+        'certifyUserId', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      final revoked = alice.revokeUserIdCertification(
+        certified,
+        'bob@example.org',
+        reason: RevocationReason.keyCompromised,
+        message: 'signing key compromised',
+      );
+      expect(revoked.pointer.address, isNonZero);
+      revoked.dispose();
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('revokeUserIdCertification leaves the target certificate unmodified',
+        () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      alice.revokeUserIdCertification(certified, 'bob@example.org').dispose();
+      expect(certified.pointer.address, isNonZero);
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('revokeUserIdCertification throws for a user ID not on the target',
+        () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      expect(
+        () => alice.revokeUserIdCertification(bob, 'nobody@example.org'),
+        throwsA(isA<PgpException>().having((e) => e.code, 'code', -4)),
+      );
+      alice.dispose();
+      bob.dispose();
+    });
   });
 
   group('user ID inspection', () {

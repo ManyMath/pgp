@@ -401,6 +401,40 @@ class Certificate {
     }
   }
 
+  /// Revokes this certificate's own earlier third-party certification of
+  /// [userId] on [target]: the counterpart to [certifyUserId]: returning
+  /// an updated copy of [target] carrying this certificate's
+  /// certification-revocation signature on that user ID. [target] itself is
+  /// left unmodified.
+  ///
+  /// [reason] and [message] are recorded in the revocation signature so
+  /// other implementations can display why the certification was revoked.
+  ///
+  /// Throws [PgpException] if [userId] isn't present on [target] or if this
+  /// certificate's certification-capable secret key isn't available.
+  Certificate revokeUserIdCertification(
+    Certificate target,
+    String userId, {
+    RevocationReason reason = RevocationReason.unspecified,
+    String? message,
+  }) {
+    final userIdPointer = userId.toNativeUtf8();
+    final messagePointer = message?.toNativeUtf8();
+    try {
+      return _derive(
+          (out) => _bindings.pgp_certificate_revoke_userid_certification(
+              _ptr,
+              target._ptr,
+              userIdPointer.cast(),
+              reason.code,
+              messagePointer?.cast() ?? nullptr,
+              out));
+    } finally {
+      calloc.free(userIdPointer);
+      if (messagePointer != null) calloc.free(messagePointer);
+    }
+  }
+
   /// Returns the primary key fingerprint as a 40-character uppercase hex string.
   String fingerprint() {
     final out = calloc<Pointer<Char>>();
