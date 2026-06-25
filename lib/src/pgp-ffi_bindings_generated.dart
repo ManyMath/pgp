@@ -711,6 +711,44 @@ class PgpFfiBindings {
           int Function(
               ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// Return one line per distinct third-party certifier of `user_id`:
+  /// `issuer_fingerprint\trevoked`, where `issuer_fingerprint` is the
+  /// certifying key's fingerprint (from `pgp_certificate_certify_userid`) and
+  /// `revoked` is `1` if that certifier has since revoked their certification
+  /// via `pgp_certificate_revoke_userid_certification` (`0` otherwise).
+  /// `pgp_certificate_userids_info` only reports self-signature state
+  /// (primary/revoked/expiry); this is the third-party-certification
+  /// counterpart. Reports what's attached to the certificate as-is: it does
+  /// not cryptographically re-verify each signature against the issuer's key
+  /// (the issuer's certificate isn't available here), matching the trust
+  /// model of every other inspection function in this module. Returns
+  /// NotFound if `user_id` is not present on `cert`.
+  /// Caller must free `*out` with `free()`.
+  ///
+  /// # Safety
+  /// `cert`, `user_id`, and `out` must be non-null.
+  int pgp_certificate_userid_certifications(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Char> user_id,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> out,
+  ) {
+    return _pgp_certificate_userid_certifications(
+      cert,
+      user_id,
+      out,
+    );
+  }
+
+  late final _pgp_certificate_userid_certificationsPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_userid_certifications');
+  late final _pgp_certificate_userid_certifications =
+      _pgp_certificate_userid_certificationsPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
   /// Return one line per subkey:
   /// `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
   /// comma-separated list of capabilities (`encryption`, `signing`), `revoked`
