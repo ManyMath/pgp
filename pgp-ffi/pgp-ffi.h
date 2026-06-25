@@ -348,6 +348,25 @@ int32_t pgp_certificate_unlock(const struct Certificate *cert,
                                struct Certificate **out_cert);
 
 /**
+ * Encrypt all currently-unencrypted secret key material in `cert` with
+ * `passphrase`, writing a new certificate with locked secrets to
+ * `*out_cert`: the counterpart to `pgp_certificate_unlock`. Keys that are
+ * already passphrase-protected are left as-is (so this also works to add
+ * protection to a mix of locked and unlocked keys), which means calling
+ * `lock` again with a different passphrase does *not* change the
+ * passphrase on already-locked keys; `unlock` first if you need to rotate
+ * an existing passphrase.
+ *
+ * Returns `NotFound` (-4) if `cert` carries no secret material.
+ *
+ * # Safety
+ * `cert`, `passphrase`, and `out_cert` must be non-null.
+ */
+int32_t pgp_certificate_lock(const struct Certificate *cert,
+                             const char *passphrase,
+                             struct Certificate **out_cert);
+
+/**
  * Sign `plaintext` with the certificate and write an ASCII-armored detached
  * signature (BEGIN PGP SIGNATURE) to `*armored_sig`. The plaintext is left
  * untouched. Caller must free `*armored_sig` with `free()`.

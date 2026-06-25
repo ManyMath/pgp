@@ -157,6 +157,26 @@ int main(void) {
   pgp_certificate_free(cert);
   cert = updated;
 
+  struct Certificate *locked = NULL;
+  rc = pgp_certificate_lock(cert, "correct horse battery staple", &locked);
+  if (rc != 0 || locked == NULL) {
+    fprintf(stderr, "pgp_certificate_lock failed: rc=%" PRId32 "\n", rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  struct Certificate *unlocked = NULL;
+  rc = pgp_certificate_unlock(locked, "correct horse battery staple",
+                               &unlocked);
+  if (rc != 0 || unlocked == NULL) {
+    fprintf(stderr, "pgp_certificate_unlock failed: rc=%" PRId32 "\n", rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(locked);
+    return 1;
+  }
+  pgp_certificate_free(locked);
+  pgp_certificate_free(unlocked);
+
   char *armored = NULL;
   rc = pgp_certificate_export_armored(cert, &armored);
   if (rc != 0 || armored == NULL) {

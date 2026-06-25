@@ -1560,6 +1560,77 @@ pub unsafe extern "C" fn pgp_certificate_unlock(
     FFIError::Ok as i32
 }
 
+/// Encrypt all currently-unencrypted secret key material in `cert` with
+/// `passphrase`, writing a new certificate with locked secrets to
+/// `*out_cert`: the counterpart to `pgp_certificate_unlock`. Keys that are
+/// already passphrase-protected are left as-is (so this also works to add
+/// protection to a mix of locked and unlocked keys), which means calling
+/// `lock` again with a different passphrase does *not* change the
+/// passphrase on already-locked keys; `unlock` first if you need to rotate
+/// an existing passphrase.
+///
+/// Returns `NotFound` (-4) if `cert` carries no secret material.
+///
+/// # Safety
+/// `cert`, `passphrase`, and `out_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_lock(
+    cert: *const Certificate,
+    passphrase: *const libc::c_char,
+    out_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || passphrase.is_null() || out_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+
+    // Require at least one key with secret material.
+    if sequoia_cert.keys().secret().next().is_none() {
+        return FFIError::NotFound as i32;
+    }
+
+    let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let password: Password = passphrase_str.into();
+
+    // Encrypt each key that currently has unencrypted secret material and
+    // re-insert it; keys that are already locked are left untouched.
+    let mut packets: Vec<sequoia_openpgp::Packet> = Vec::new();
+    for ka in sequoia_cert.keys().secret() {
+        let key = ka.key().clone();
+        if !key.has_unencrypted_secret() {
+            continue;
+        }
+        let locked = match key.encrypt_secret(&password) {
+            Ok(k) => k,
+            Err(_) => return FFIError::Failed as i32,
+        };
+        let packet: sequoia_openpgp::Packet = if ka.primary() {
+            locked.role_into_primary().into()
+        } else {
+            locked.role_into_subordinate().into()
+        };
+        packets.push(packet);
+    }
+
+    let updated = match sequoia_cert.insert_packets(packets) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *out_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 /// Sign `plaintext` with the certificate and write an ASCII-armored detached
 /// signature (BEGIN PGP SIGNATURE) to `*armored_sig`. The plaintext is left
 /// untouched. Caller must free `*armored_sig` with `free()`.
@@ -4333,6 +4404,175 @@ mod tests {
                 pgp_certificate_userids_info(cert, ptr::null_mut()),
                 FFIError::Null as i32
             );
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn lock_encrypts_unencrypted_secret_material() {
+        unsafe {
+            let cert = generate_cert("lock@example.org");
+            let passphrase = CString::new("correct horse battery staple").unwrap();
+
+            let mut locked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_lock(cert, passphrase.as_ptr(), &mut locked),
+                FFIError::Ok as i32
+            );
+            assert!(!locked.is_null());
+
+            let sequoia_cert = &*(&*locked).0;
+            assert!(sequoia_cert
+                .keys()
+                .secret()
+                .all(|ka| !ka.key().has_unencrypted_secret()));
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(locked);
+        }
+    }
+
+    #[test]
+    fn lock_then_unlock_round_trips_with_same_passphrase() {
+        unsafe {
+            let cert = generate_cert("lock-unlock@example.org");
+            let passphrase = CString::new("correct horse battery staple").unwrap();
+
+            let mut locked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_lock(cert, passphrase.as_ptr(), &mut locked),
+                FFIError::Ok as i32
+            );
+
+            let mut unlocked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_unlock(locked, passphrase.as_ptr(), &mut unlocked),
+                FFIError::Ok as i32
+            );
+
+            let sequoia_cert = &*(&*unlocked).0;
+            assert!(sequoia_cert
+                .keys()
+                .secret()
+                .all(|ka| ka.key().has_unencrypted_secret()));
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(locked);
+            pgp_certificate_free(unlocked);
+        }
+    }
+
+    #[test]
+    fn lock_rejects_wrong_passphrase_on_unlock() {
+        unsafe {
+            let cert = generate_cert("lock-wrong-pass@example.org");
+            let passphrase = CString::new("correct horse battery staple").unwrap();
+            let wrong_passphrase = CString::new("wrong passphrase").unwrap();
+
+            let mut locked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_lock(cert, passphrase.as_ptr(), &mut locked),
+                FFIError::Ok as i32
+            );
+
+            let mut unlocked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_unlock(locked, wrong_passphrase.as_ptr(), &mut unlocked),
+                FFIError::Invalid as i32
+            );
+            assert!(unlocked.is_null());
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(locked);
+        }
+    }
+
+    #[test]
+    fn lock_returns_not_found_for_public_only_cert() {
+        unsafe {
+            let cert = generate_cert("lock-public-only@example.org");
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_export_public_armored(cert, &mut armored),
+                FFIError::Ok as i32
+            );
+            let armored_str = to_owned_c_string(armored);
+            let armored_c = CString::new(armored_str).unwrap();
+
+            let mut public_only: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_from_armored(armored_c.as_ptr(), &mut public_only),
+                FFIError::Ok as i32
+            );
+
+            let passphrase = CString::new("irrelevant").unwrap();
+            let mut locked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_lock(public_only, passphrase.as_ptr(), &mut locked),
+                FFIError::NotFound as i32
+            );
+            assert!(locked.is_null());
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(public_only);
+        }
+    }
+
+    #[test]
+    fn lock_leaves_already_locked_keys_untouched() {
+        unsafe {
+            let cert = generate_cert("lock-idempotent@example.org");
+            let passphrase = CString::new("first passphrase").unwrap();
+            let second_passphrase = CString::new("second passphrase").unwrap();
+
+            let mut locked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_lock(cert, passphrase.as_ptr(), &mut locked),
+                FFIError::Ok as i32
+            );
+
+            // Locking again with a different passphrase must not change the
+            // passphrase on keys that are already locked.
+            let mut relocked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_lock(locked, second_passphrase.as_ptr(), &mut relocked),
+                FFIError::Ok as i32
+            );
+
+            let mut unlocked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_unlock(relocked, passphrase.as_ptr(), &mut unlocked),
+                FFIError::Ok as i32
+            );
+            assert!(!unlocked.is_null());
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(locked);
+            pgp_certificate_free(relocked);
+            pgp_certificate_free(unlocked);
+        }
+    }
+
+    #[test]
+    fn lock_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("lock-null@example.org");
+            let passphrase = CString::new("passphrase").unwrap();
+            let mut locked: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_lock(ptr::null(), passphrase.as_ptr(), &mut locked),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_lock(cert, ptr::null(), &mut locked),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_lock(cert, passphrase.as_ptr(), ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
             pgp_certificate_free(cert);
         }
     }
