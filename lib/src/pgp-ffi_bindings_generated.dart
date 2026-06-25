@@ -561,11 +561,15 @@ class PgpFfiBindings {
       int Function(
           ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
-  /// Return one line per subkey: `index\tfingerprint\tflags\trevoked`, where
-  /// `flags` is a comma-separated list of capabilities (`encryption`,
-  /// `signing`) and `revoked` is `1` if the subkey is revoked, `0` otherwise.
-  /// `index` matches the zero-based `subkey_index` accepted by
-  /// `pgp_certificate_revoke_subkey`, so callers no longer need to guess it.
+  /// Return one line per subkey:
+  /// `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
+  /// comma-separated list of capabilities (`encryption`, `signing`), `revoked`
+  /// is `1` if the subkey is revoked (`0` otherwise), and `expiry_epoch` is the
+  /// subkey's own expiration as seconds since the Unix epoch (`0` if it has no
+  /// expiry, independent of the primary key's or other subkeys' expiry: see
+  /// `pgp_certificate_set_subkey_expiry`). `index` matches the zero-based
+  /// `subkey_index` accepted by `pgp_certificate_revoke_subkey` and
+  /// `pgp_certificate_set_subkey_expiry`, so callers no longer need to guess it.
   /// Caller must free `*out` with `free()`.
   ///
   /// # Safety
@@ -789,6 +793,39 @@ class PgpFfiBindings {
   late final _pgp_certificate_set_expiry =
       _pgp_certificate_set_expiryPtr.asFunction<
           int Function(ffi.Pointer<Certificate>, int,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
+  /// Update the expiry on a single subkey (counting subkeys only, same indexing
+  /// as `pgp_certificate_revoke_subkey`/`pgp_certificate_subkeys`), leaving the
+  /// primary key's and every other subkey's expiry untouched.
+  /// `validity_seconds == 0` clears that subkey's expiry. Writes the updated
+  /// certificate to `*new_cert`. Caller must free both the original and the
+  /// returned certificate separately.
+  ///
+  /// # Safety
+  /// `cert` and `new_cert` must be non-null.
+  int pgp_certificate_set_subkey_expiry(
+    ffi.Pointer<Certificate> cert,
+    int subkey_index,
+    int validity_seconds,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_set_subkey_expiry(
+      cert,
+      subkey_index,
+      validity_seconds,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_set_subkey_expiryPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Uint32,
+                  ffi.Uint64, ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_set_subkey_expiry');
+  late final _pgp_certificate_set_subkey_expiry =
+      _pgp_certificate_set_subkey_expiryPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, int, int,
               ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
   /// Encrypt `plaintext` to all `count` recipient certificates and sign the
