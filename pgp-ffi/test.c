@@ -163,6 +163,33 @@ int main(void) {
   pgp_certificate_free(merged);
 
   updated = NULL;
+  rc = pgp_certificate_set_primary_userid(cert, "other@example.org", &updated);
+  if (rc != 0 || updated == NULL) {
+    fprintf(stderr, "pgp_certificate_set_primary_userid failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  char *primary_info = NULL;
+  rc = pgp_certificate_userids_info(updated, &primary_info);
+  if (rc != 0 || primary_info == NULL ||
+      strstr(primary_info, "someone@example.org\t0\t0\t") == NULL ||
+      strstr(primary_info, "other@example.org\t0\t1\t") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_set_primary_userid did not switch the primary "
+            "user ID: %s\n",
+            primary_info ? primary_info : "(null)");
+    if (primary_info != NULL) free(primary_info);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(updated);
+    return 1;
+  }
+  free(primary_info);
+  pgp_certificate_free(updated);
+
+  updated = NULL;
   rc = pgp_certificate_add_transport_encryption_subkey(cert, &updated);
   if (rc != 0 || updated == NULL) {
     fprintf(stderr,

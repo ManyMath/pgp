@@ -753,6 +753,44 @@ class PgpFfiBindings {
           int Function(
               ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// Mark `user_id` as the certificate's primary user ID, writing the updated
+  /// cert to `*new_cert`. Primary-user-ID resolution (as used by
+  /// `pgp_certificate_userids_info` and every other consumer of Sequoia's
+  /// policy-validated view) picks the primary-flagged user ID binding with the
+  /// *newest* signature creation time, so this refreshes `user_id`'s own
+  /// binding signature with a creation time strictly after every existing user
+  /// ID binding on the certificate and sets its primary-user-ID flag: it does
+  /// not touch any other user ID's signatures. Returns NotFound if `user_id`
+  /// is not present on `cert`. `cert`'s certification-capable secret key
+  /// material must be present and unencrypted.
+  /// Caller must free `*new_cert` with `pgp_certificate_free`.
+  ///
+  /// # Safety
+  /// `cert`, `user_id`, and `new_cert` must be non-null.
+  int pgp_certificate_set_primary_userid(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Char> user_id,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_set_primary_userid(
+      cert,
+      user_id,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_set_primary_useridPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_set_primary_userid');
+  late final _pgp_certificate_set_primary_userid =
+      _pgp_certificate_set_primary_useridPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
   /// Return one line per distinct third-party certifier of `user_id`:
   /// `issuer_fingerprint\trevoked`, where `issuer_fingerprint` is the
   /// certifying key's fingerprint (from `pgp_certificate_certify_userid`) and

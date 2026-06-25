@@ -319,6 +319,26 @@ int32_t pgp_certificate_userids(const struct Certificate *cert, char **out);
 int32_t pgp_certificate_userids_info(const struct Certificate *cert, char **out);
 
 /**
+ * Mark `user_id` as the certificate's primary user ID, writing the updated
+ * cert to `*new_cert`. Primary-user-ID resolution (as used by
+ * `pgp_certificate_userids_info` and every other consumer of Sequoia's
+ * policy-validated view) picks the primary-flagged user ID binding with the
+ * *newest* signature creation time, so this refreshes `user_id`'s own
+ * binding signature with a creation time strictly after every existing user
+ * ID binding on the certificate and sets its primary-user-ID flag: it does
+ * not touch any other user ID's signatures. Returns NotFound if `user_id`
+ * is not present on `cert`. `cert`'s certification-capable secret key
+ * material must be present and unencrypted.
+ * Caller must free `*new_cert` with `pgp_certificate_free`.
+ *
+ * # Safety
+ * `cert`, `user_id`, and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_set_primary_userid(const struct Certificate *cert,
+                                           const char *user_id,
+                                           struct Certificate **new_cert);
+
+/**
  * Return one line per distinct third-party certifier of `user_id`:
  * `issuer_fingerprint\trevoked`, where `issuer_fingerprint` is the
  * certifying key's fingerprint (from `pgp_certificate_certify_userid`) and

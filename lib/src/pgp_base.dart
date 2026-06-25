@@ -497,6 +497,23 @@ class Certificate {
     }
   }
 
+  /// Marks [userId] as this certificate's primary user ID, returning an
+  /// updated copy. The primary user ID is the one implementations should
+  /// show by default (e.g. in a key listing) when a certificate has more
+  /// than one; [userIdsInfo]'s `isPrimary` flag reflects the result.
+  ///
+  /// Throws [PgpException] if [userId] isn't present on this certificate or
+  /// if this certificate's certification-capable secret key isn't available.
+  Certificate setPrimaryUserId(String userId) {
+    final userIdPointer = userId.toNativeUtf8();
+    try {
+      return _derive((out) => _bindings.pgp_certificate_set_primary_userid(
+          _ptr, userIdPointer.cast(), out));
+    } finally {
+      calloc.free(userIdPointer);
+    }
+  }
+
   /// Merges updates from [other] into this certificate: new signatures,
   /// certifications, subkeys, and revocations: returning the combined
   /// certificate. This is the counterpart to importing a refreshed copy of a

@@ -474,6 +474,41 @@ void main() {
       withUser.dispose();
       cert.dispose();
     });
+
+    test('setPrimaryUserId switches which user ID is primary', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final withSecond = cert.addUserId('second@example.org');
+      final updated = withSecond.setPrimaryUserId('second@example.org');
+
+      final infos = updated.userIdsInfo();
+      final primary =
+          infos.firstWhere((i) => i.userId == 'someone@example.org');
+      final secondary =
+          infos.firstWhere((i) => i.userId == 'second@example.org');
+      expect(primary.isPrimary, isFalse);
+      expect(secondary.isPrimary, isTrue);
+
+      // withSecond itself must be unaffected.
+      final originalInfos = withSecond.userIdsInfo();
+      expect(
+          originalInfos
+              .firstWhere((i) => i.userId == 'someone@example.org')
+              .isPrimary,
+          isTrue);
+
+      updated.dispose();
+      withSecond.dispose();
+      cert.dispose();
+    });
+
+    test('setPrimaryUserId throws for a user ID not on the certificate', () {
+      final cert = pgp.generateKey('someone@example.org');
+      expect(
+        () => cert.setPrimaryUserId('nobody@example.org'),
+        throwsA(isA<PgpException>()),
+      );
+      cert.dispose();
+    });
   });
 
   group('key expiration', () {

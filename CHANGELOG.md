@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Add `Certificate.setPrimaryUserId(userId)`, promoting `userId` to the
+  certificate's primary user ID (the one implementations show by default
+  when a certificate has more than one): the mutation counterpart to the
+  `isPrimary` flag `userIdsInfo()` already reports.
 - Add `Certificate.revocationInfo()`, returning a `RevocationInfo`
   (`isRevoked`, `reasonCode`, `message`) describing whether the certificate
   itself has been revoked via `Certificate.revoke()`: the whole-certificate

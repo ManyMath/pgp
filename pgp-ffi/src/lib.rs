@@ -1394,6 +1394,108 @@ pub unsafe extern "C" fn pgp_certificate_userids_info(
     write_c_string(&joined, out)
 }
 
+/// Mark `user_id` as the certificate's primary user ID, writing the updated
+/// cert to `*new_cert`. Primary-user-ID resolution (as used by
+/// `pgp_certificate_userids_info` and every other consumer of Sequoia's
+/// policy-validated view) picks the primary-flagged user ID binding with the
+/// *newest* signature creation time, so this refreshes `user_id`'s own
+/// binding signature with a creation time strictly after every existing user
+/// ID binding on the certificate and sets its primary-user-ID flag: it does
+/// not touch any other user ID's signatures. Returns NotFound if `user_id`
+/// is not present on `cert`. `cert`'s certification-capable secret key
+/// material must be present and unencrypted.
+/// Caller must free `*new_cert` with `pgp_certificate_free`.
+///
+/// # Safety
+/// `cert`, `user_id`, and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_set_primary_userid(
+    cert: *const Certificate,
+    user_id: *const libc::c_char,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || user_id.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+
+    let user_id_str = match CStr::from_ptr(user_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let policy = StandardPolicy::new();
+    let vc = match sequoia_cert.with_policy(&policy, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let ua = match vc
+        .userids()
+        .find(|ua| ua.userid().value() == user_id_str.as_bytes())
+    {
+        Some(ua) => ua,
+        None => return FFIError::NotFound as i32,
+    };
+    let userid = ua.userid().clone();
+    let template: sequoia_openpgp::packet::signature::SignatureBuilder =
+        ua.binding_signature().clone().into();
+
+    // See the comment above: wait until strictly past every existing user
+    // ID's newest binding-signature creation time so the refreshed
+    // signature deterministically wins primary-user-ID resolution.
+    let newest = vc
+        .userids()
+        .filter_map(|ua| ua.binding_signature().signature_creation_time())
+        .max();
+    if let Some(newest) = newest {
+        let target = newest + Duration::from_secs(1);
+        loop {
+            match target.duration_since(SystemTime::now()) {
+                Ok(remaining) if remaining <= Duration::from_secs(2) => {
+                    std::thread::sleep(remaining);
+                }
+                _ => break,
+            }
+        }
+    }
+
+    let mut signer = match sequoia_cert.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig_builder = match template
+        .set_signature_creation_time(SystemTime::now())
+        .and_then(|b| b.set_primary_userid(true))
+    {
+        Ok(b) => b,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let sig = match userid.bind(&mut signer, &sequoia_cert, sig_builder) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match sequoia_cert.insert_packets(vec![sequoia_openpgp::Packet::from(sig)]) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 /// Return one line per distinct third-party certifier of `user_id`:
 /// `issuer_fingerprint\trevoked`, where `issuer_fingerprint` is the
 /// certifying key's fingerprint (from `pgp_certificate_certify_userid`) and
@@ -4663,6 +4765,109 @@ mod tests {
                 pgp_certificate_userids_info(cert, ptr::null_mut()),
                 FFIError::Null as i32
             );
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn set_primary_userid_switches_to_secondary_user_id() {
+        unsafe {
+            let cert = generate_cert("set-primary@example.org");
+            let second_user_id = CString::new("second-primary@example.org").unwrap();
+
+            let mut with_second: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_userid(cert, second_user_id.as_ptr(), &mut with_second),
+                FFIError::Ok as i32
+            );
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_primary_userid(
+                    with_second,
+                    second_user_id.as_ptr(),
+                    &mut updated,
+                ),
+                FFIError::Ok as i32
+            );
+            assert!(!updated.is_null());
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userids_info(updated, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+            let primary_flags: std::collections::HashMap<&str, &str> = listing_str
+                .lines()
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    (f[0], f[2])
+                })
+                .collect();
+            assert_eq!(primary_flags["set-primary@example.org"], "0");
+            assert_eq!(primary_flags["second-primary@example.org"], "1");
+
+            // `with_second` itself must be unaffected by the update.
+            let mut original_listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_userids_info(with_second, &mut original_listing),
+                FFIError::Ok as i32
+            );
+            let original_str = to_owned_c_string(original_listing);
+            let original_flags: std::collections::HashMap<&str, &str> = original_str
+                .lines()
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    (f[0], f[2])
+                })
+                .collect();
+            assert_eq!(original_flags["set-primary@example.org"], "1");
+            assert_eq!(original_flags["second-primary@example.org"], "0");
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(with_second);
+            pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn set_primary_userid_rejects_missing_user_id() {
+        unsafe {
+            let cert = generate_cert("set-primary-missing@example.org");
+            let missing = CString::new("nonexistent@example.org").unwrap();
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_primary_userid(cert, missing.as_ptr(), &mut updated),
+                FFIError::NotFound as i32
+            );
+            assert!(updated.is_null());
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn set_primary_userid_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("set-primary-null@example.org");
+            let user_id = CString::new("set-primary-null@example.org").unwrap();
+            let mut updated: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_set_primary_userid(ptr::null(), user_id.as_ptr(), &mut updated),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_set_primary_userid(cert, ptr::null(), &mut updated),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_set_primary_userid(cert, user_id.as_ptr(), ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
             pgp_certificate_free(cert);
         }
     }
