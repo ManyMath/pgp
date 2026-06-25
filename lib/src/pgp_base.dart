@@ -33,6 +33,37 @@ enum RevocationReason {
   final int code;
 }
 
+/// Key algorithm/curve to use when generating a new certificate, passed to
+/// [PGP.generateKeyWithCipherSuite].
+enum CipherSuite {
+  /// EdDSA and ECDH over Curve25519 with SHA512 and AES256 (the default
+  /// used by [PGP.generateKey]).
+  cv25519(0),
+
+  /// 3072-bit RSA with SHA512 and AES256.
+  rsa3k(1),
+
+  /// EdDSA and ECDH over NIST P-256 with SHA256 and AES256.
+  p256(2),
+
+  /// EdDSA and ECDH over NIST P-384 with SHA384 and AES256.
+  p384(3),
+
+  /// EdDSA and ECDH over NIST P-521 with SHA512 and AES256.
+  p521(4),
+
+  /// 2048-bit RSA with SHA512 and AES256.
+  rsa2k(5),
+
+  /// 4096-bit RSA with SHA512 and AES256.
+  rsa4k(6);
+
+  const CipherSuite(this.code);
+
+  /// The code `pgp_key_generate_with_cipher_suite` expects.
+  final int code;
+}
+
 /// A snapshot of certificate metadata returned by [Certificate.info].
 class CertificateInfo {
   /// 40-character uppercase hex fingerprint (v4 key).
@@ -1169,6 +1200,23 @@ class PGP {
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
       final code = _bindings.pgp_key_generate(userIdPointer.cast(), out);
+      if (code != 0) throw PgpException(code);
+      return Certificate._(out.value);
+    } finally {
+      calloc.free(userIdPointer);
+      calloc.free(out);
+    }
+  }
+
+  /// Generates a new certificate carrying [userId] using [cipherSuite]
+  /// instead of the default [CipherSuite.cv25519]: e.g. to produce an RSA
+  /// key for interoperating with a target that requires one.
+  Certificate generateKeyWithCipherSuite(String userId, CipherSuite cipherSuite) {
+    final userIdPointer = userId.toNativeUtf8();
+    final out = calloc<Pointer<ffi.Certificate>>();
+    try {
+      final code = _bindings.pgp_key_generate_with_cipher_suite(
+          userIdPointer.cast(), cipherSuite.code, out);
       if (code != 0) throw PgpException(code);
       return Certificate._(out.value);
     } finally {

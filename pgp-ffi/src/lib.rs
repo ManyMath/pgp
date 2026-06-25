@@ -242,6 +242,68 @@ pub unsafe extern "C" fn pgp_key_generate(
     }
 }
 
+/// Maps the `cipher_suite` codes accepted by
+/// `pgp_key_generate_with_cipher_suite` to Sequoia's `CipherSuite`:
+/// 0 = Cv25519 (default, EdDSA/ECDH over Curve25519), 1 = RSA3k, 2 = P256,
+/// 3 = P384, 4 = P521, 5 = RSA2k, 6 = RSA4k.
+fn cipher_suite_from_code(code: u8) -> Option<CipherSuite> {
+    match code {
+        0 => Some(CipherSuite::Cv25519),
+        1 => Some(CipherSuite::RSA3k),
+        2 => Some(CipherSuite::P256),
+        3 => Some(CipherSuite::P384),
+        4 => Some(CipherSuite::P521),
+        5 => Some(CipherSuite::RSA2k),
+        6 => Some(CipherSuite::RSA4k),
+        _ => None,
+    }
+}
+
+/// Generate a new certificate with the given user ID and key algorithm,
+/// using the same subkey layout as `pgp_key_generate` (a transport-encryption
+/// subkey and a signing subkey). See `cipher_suite_from_code` for the
+/// `cipher_suite` code mapping; an out-of-range code is rejected as Invalid.
+///
+/// # Safety
+/// `user_id` and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_key_generate_with_cipher_suite(
+    user_id: *const libc::c_char,
+    cipher_suite: u8,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if user_id.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let c_str = CStr::from_ptr(user_id);
+    let user_id_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let cipher_suite = match cipher_suite_from_code(cipher_suite) {
+        Some(cs) => cs,
+        None => return FFIError::Invalid as i32,
+    };
+
+    let result = CertBuilder::new()
+        .set_cipher_suite(cipher_suite)
+        .add_userid(user_id_str)
+        .add_transport_encryption_subkey()
+        .add_signing_subkey()
+        .generate();
+
+    match result {
+        Ok((cert, _revocation)) => {
+            let inner = Box::into_raw(Box::new(cert));
+            *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+            FFIError::Ok as i32
+        }
+        Err(_) => FFIError::Failed as i32,
+    }
+}
+
 /// Export the certificate as an ASCII-armored public key block.
 /// Caller must free `*armored` with `free()`.
 ///
@@ -3409,6 +3471,77 @@ mod tests {
             let user_id = CString::new("null-out@example.org").unwrap();
             let rc = pgp_key_generate(user_id.as_ptr(), ptr::null_mut());
             assert_eq!(rc, FFIError::Null as i32);
+        }
+    }
+
+    #[test]
+    fn key_generate_with_cipher_suite_produces_requested_algorithm() {
+        unsafe {
+            let user_id = CString::new("rsa-key@example.org").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_key_generate_with_cipher_suite(user_id.as_ptr(), 5, &mut cert),
+                FFIError::Ok as i32
+            );
+            assert!(!cert.is_null());
+
+            let sequoia_cert = &*(&*cert).0;
+            assert_eq!(
+                sequoia_cert.primary_key().pk_algo(),
+                sequoia_openpgp::types::PublicKeyAlgorithm::RSAEncryptSign
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn key_generate_with_cipher_suite_defaults_match_key_generate() {
+        unsafe {
+            let user_id = CString::new("cv25519-key@example.org").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_key_generate_with_cipher_suite(user_id.as_ptr(), 0, &mut cert),
+                FFIError::Ok as i32
+            );
+            assert!(!cert.is_null());
+
+            let sequoia_cert = &*(&*cert).0;
+            assert_eq!(
+                sequoia_cert.primary_key().pk_algo(),
+                sequoia_openpgp::types::PublicKeyAlgorithm::EdDSA
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn key_generate_with_cipher_suite_rejects_out_of_range_code() {
+        unsafe {
+            let user_id = CString::new("bad-suite@example.org").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_key_generate_with_cipher_suite(user_id.as_ptr(), 7, &mut cert),
+                FFIError::Invalid as i32
+            );
+            assert!(cert.is_null());
+        }
+    }
+
+    #[test]
+    fn key_generate_with_cipher_suite_rejects_null_args() {
+        unsafe {
+            let user_id = CString::new("null-suite@example.org").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_key_generate_with_cipher_suite(ptr::null(), 0, &mut cert),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_key_generate_with_cipher_suite(user_id.as_ptr(), 0, ptr::null_mut()),
+                FFIError::Null as i32
+            );
         }
     }
 

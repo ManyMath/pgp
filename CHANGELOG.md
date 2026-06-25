@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Add `PGP.generateKeyWithCipherSuite(userId, cipherSuite)` and a
+  `CipherSuite` enum (`cv25519` (default, matches `generateKey`), `rsa3k`,
+  `p256`, `p384`, `p521`, `rsa2k`, `rsa4k`), so certificates can be
+  generated with an algorithm other than the Curve25519 default: e.g. RSA
+  for interoperating with targets that require it.
 - Add `Certificate.generateRevocationArmored({reason, message})` and
   `Certificate.applyRevocationArmored(armored)`: the `gpg --gen-revoke`
   workflow. Generate and store a revocation certificate offline right after

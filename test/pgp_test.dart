@@ -12,6 +12,25 @@ void main() {
     cert.dispose();
   });
 
+  test('generateKeyWithCipherSuite defaults match generateKey', () {
+    final cvCert = pgp.generateKeyWithCipherSuite(
+        'cv25519@example.org', CipherSuite.cv25519);
+    expect(cvCert.pointer.address, isNonZero);
+    cvCert.dispose();
+  });
+
+  test('generateKeyWithCipherSuite can produce an RSA key', () {
+    final rsaCert =
+        pgp.generateKeyWithCipherSuite('rsa@example.org', CipherSuite.rsa2k);
+    expect(rsaCert.pointer.address, isNonZero);
+
+    final encrypted = rsaCert.encrypt('hello RSA');
+    final decrypted = rsaCert.decrypt(encrypted);
+    expect(decrypted, 'hello RSA');
+
+    rsaCert.dispose();
+  });
+
   test('certificateFromArmored rejects invalid input', () {
     expect(() => pgp.certificateFromArmored('not a certificate'),
         throwsA(isA<PgpException>()));

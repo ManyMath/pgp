@@ -382,6 +382,18 @@ int main(void) {
   pgp_certificate_free(revocable);
   pgp_certificate_free(revoked_via_standalone);
 
+  struct Certificate *rsa_cert = NULL;
+  rc = pgp_key_generate_with_cipher_suite(
+      "rsa-key@example.org", /* RSA2k */ 5, &rsa_cert);
+  if (rc != 0 || rsa_cert == NULL) {
+    fprintf(stderr,
+            "pgp_key_generate_with_cipher_suite failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  pgp_certificate_free(rsa_cert);
+
   char *armored = NULL;
   rc = pgp_certificate_export_armored(cert, &armored);
   if (rc != 0 || armored == NULL) {

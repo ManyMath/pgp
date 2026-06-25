@@ -33,6 +33,19 @@ int32_t pgp_certificate_from_armored(const char *armored, struct Certificate **c
 int32_t pgp_key_generate(const char *user_id, struct Certificate **new_cert);
 
 /**
+ * Generate a new certificate with the given user ID and key algorithm,
+ * using the same subkey layout as `pgp_key_generate` (a transport-encryption
+ * subkey and a signing subkey). See `cipher_suite_from_code` for the
+ * `cipher_suite` code mapping; an out-of-range code is rejected as Invalid.
+ *
+ * # Safety
+ * `user_id` and `new_cert` must be non-null.
+ */
+int32_t pgp_key_generate_with_cipher_suite(const char *user_id,
+                                           uint8_t cipher_suite,
+                                           struct Certificate **new_cert);
+
+/**
  * Export the certificate as an ASCII-armored public key block.
  * Caller must free `*armored` with `free()`.
  *

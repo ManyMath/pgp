@@ -87,6 +87,35 @@ class PgpFfiBindings {
       int Function(
           ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
+  /// Generate a new certificate with the given user ID and key algorithm,
+  /// using the same subkey layout as `pgp_key_generate` (a transport-encryption
+  /// subkey and a signing subkey). See `cipher_suite_from_code` for the
+  /// `cipher_suite` code mapping; an out-of-range code is rejected as Invalid.
+  ///
+  /// # Safety
+  /// `user_id` and `new_cert` must be non-null.
+  int pgp_key_generate_with_cipher_suite(
+    ffi.Pointer<ffi.Char> user_id,
+    int cipher_suite,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_key_generate_with_cipher_suite(
+      user_id,
+      cipher_suite,
+      new_cert,
+    );
+  }
+
+  late final _pgp_key_generate_with_cipher_suitePtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Uint8,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_key_generate_with_cipher_suite');
+  late final _pgp_key_generate_with_cipher_suite =
+      _pgp_key_generate_with_cipher_suitePtr.asFunction<
+          int Function(ffi.Pointer<ffi.Char>, int,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
   /// Export the certificate as an ASCII-armored public key block.
   /// Caller must free `*armored` with `free()`.
   ///
