@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Upgraded dev-only tooling dependencies: `ffigen` from 14.x to 20.1.1 and
+  `lints` from 4.x to 6.1.0. Neither is a runtime dependency: the
+  regenerated FFI bindings came out functionally identical (only an added
+  `unused_import` lint suppression comment changed) and `dart analyze`
+  reports no new issues under the newer lint set.
+
 - Upgraded the internal `sequoia-openpgp` dependency from 1.22.0 to 2.4.0,
   fixing RUSTSEC-2025-0136 (a medium-severity integer underflow in AES key
   unwrapping). Internal dependency bump only: no public Dart API change.
