@@ -1186,6 +1186,34 @@ void main() {
       expect(() => cert.decrypt(cipher), throwsA(isA<PgpException>()));
       cert.dispose();
     });
+
+    test(
+        'encryptAndSignSymmetric and decryptAndVerifySymmetric round-trip',
+        () {
+      final signer = pgp.generateKey('symmetric-signer@example.org');
+      const plain = 'sign+symmetric secret';
+      const pass = 'correct horse battery staple';
+
+      final signingSubkey = signer.subkeys().firstWhere((s) => s.canSign);
+
+      final cipher = signer.encryptAndSignSymmetric(plain, pass);
+      final result = signer.decryptAndVerifySymmetric(cipher, pass);
+      expect(result.plaintext, plain);
+      expect(result.signerFingerprint, signingSubkey.fingerprint);
+
+      signer.dispose();
+    });
+
+    test('decryptAndVerifySymmetric rejects wrong passphrase', () {
+      final signer = pgp.generateKey('symmetric-signer-wrong@example.org');
+      final cipher =
+          signer.encryptAndSignSymmetric('payload', 'rightpass');
+      expect(
+        () => signer.decryptAndVerifySymmetric(cipher, 'wrongpass'),
+        throwsA(isA<PgpException>()),
+      );
+      signer.dispose();
+    });
   });
 
   group('encryptToRecipients', () {

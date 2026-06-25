@@ -729,6 +729,39 @@ int32_t pgp_decrypt_string_symmetric(const char *armored_message,
                                      char **plaintext_out);
 
 /**
+ * Sign `plaintext` with `signer_cert` and encrypt it with `passphrase` (no
+ * recipient public key required), writing a single ASCII-armored message to
+ * `*armored_message`: the passphrase-only counterpart to
+ * `pgp_encrypt_and_sign_string`. Caller must free `*armored_message` with
+ * `free()`.
+ *
+ * # Safety
+ * `signer_cert`, `plaintext`, `passphrase`, and `armored_message` must be
+ * non-null.
+ */
+int32_t pgp_encrypt_and_sign_string_symmetric(const struct Certificate *signer_cert,
+                                              const char *plaintext,
+                                              const char *passphrase,
+                                              char **armored_message);
+
+/**
+ * Decrypt a passphrase-encrypted, signed ASCII-armored message and verify
+ * its signature against `verify_cert`: the passphrase-only counterpart to
+ * `pgp_decrypt_and_verify_string`. Writes the plaintext to `*plaintext_out`
+ * and the signer's fingerprint to `*fingerprint_out`; both must be freed
+ * with `free()`. Returns `Failed` (-3) if the passphrase is wrong, the
+ * message has no SKESK, or it carries no valid signature.
+ *
+ * # Safety
+ * All pointers must be non-null.
+ */
+int32_t pgp_decrypt_and_verify_string_symmetric(const struct Certificate *verify_cert,
+                                                const char *armored_message,
+                                                const char *passphrase,
+                                                char **plaintext_out,
+                                                char **fingerprint_out);
+
+/**
  * Merge updates from `other_cert` into `base_cert`: new signatures,
  * certifications, subkeys, and revocations: writing the combined
  * certificate to `*new_cert`. This is the counterpart to importing a

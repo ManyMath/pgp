@@ -3433,6 +3433,229 @@ pub unsafe extern "C" fn pgp_decrypt_string_symmetric(
     write_c_string(&text, plaintext_out)
 }
 
+struct SymmetricDecryptAndVerifyHelper<'a> {
+    password: Password,
+    verify_cert: &'a SequoiaCert,
+    signer_fp: Option<String>,
+}
+
+impl VerificationHelper for SymmetricDecryptAndVerifyHelper<'_> {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> Result<Vec<SequoiaCert>> {
+        Ok(vec![self.verify_cert.clone()])
+    }
+
+    fn check(&mut self, structure: MessageStructure) -> Result<()> {
+        let mut found = false;
+        for layer in structure {
+            if let MessageLayer::SignatureGroup { results } = layer {
+                if let Some(good) = results.into_iter().flatten().next() {
+                    self.signer_fp = Some(good.ka.fingerprint().to_hex());
+                    found = true;
+                }
+            }
+        }
+        if found {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No valid signature"))
+        }
+    }
+}
+
+impl DecryptionHelper for SymmetricDecryptAndVerifyHelper<'_> {
+    fn decrypt<D>(
+        &mut self,
+        _pkesks: &[PKESK],
+        skesks: &[SKESK],
+        _sym_algo: Option<SymmetricAlgorithm>,
+        mut decrypt: D,
+    ) -> Result<Option<Fingerprint>>
+    where
+        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
+    {
+        for skesk in skesks {
+            if let Ok((algo, session_key)) = skesk.decrypt(&self.password) {
+                if decrypt(algo, &session_key) {
+                    return Ok(None);
+                }
+            }
+        }
+        Err(anyhow::anyhow!("Bad passphrase or no SKESK"))
+    }
+}
+
+/// Sign `plaintext` with `signer_cert` and encrypt it with `passphrase` (no
+/// recipient public key required), writing a single ASCII-armored message to
+/// `*armored_message`: the passphrase-only counterpart to
+/// `pgp_encrypt_and_sign_string`. Caller must free `*armored_message` with
+/// `free()`.
+///
+/// # Safety
+/// `signer_cert`, `plaintext`, `passphrase`, and `armored_message` must be
+/// non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_encrypt_and_sign_string_symmetric(
+    signer_cert: *const Certificate,
+    plaintext: *const libc::c_char,
+    passphrase: *const libc::c_char,
+    armored_message: *mut *mut libc::c_char,
+) -> i32 {
+    if signer_cert.is_null()
+        || plaintext.is_null()
+        || passphrase.is_null()
+        || armored_message.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *armored_message = ptr::null_mut();
+
+    let signer_wrapper = &*signer_cert;
+    if signer_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let signer_cert_ref = &*signer_wrapper.0;
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+    let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let password: Password = passphrase_str.into();
+
+    let policy = &StandardPolicy::new();
+    let signing_key = match signer_cert_ref
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+    let keypair = match signing_key.into_keypair() {
+        Ok(kp) => kp,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Encryptor2::with_passwords(message, Some(password)).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let message = match Signer::new(message, keypair).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    if message.write_all(plaintext_bytes).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if message.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored, armored_message)
+}
+
+/// Decrypt a passphrase-encrypted, signed ASCII-armored message and verify
+/// its signature against `verify_cert`: the passphrase-only counterpart to
+/// `pgp_decrypt_and_verify_string`. Writes the plaintext to `*plaintext_out`
+/// and the signer's fingerprint to `*fingerprint_out`; both must be freed
+/// with `free()`. Returns `Failed` (-3) if the passphrase is wrong, the
+/// message has no SKESK, or it carries no valid signature.
+///
+/// # Safety
+/// All pointers must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_and_verify_string_symmetric(
+    verify_cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    passphrase: *const libc::c_char,
+    plaintext_out: *mut *mut libc::c_char,
+    fingerprint_out: *mut *mut libc::c_char,
+) -> i32 {
+    if verify_cert.is_null()
+        || armored_message.is_null()
+        || passphrase.is_null()
+        || plaintext_out.is_null()
+        || fingerprint_out.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *plaintext_out = ptr::null_mut();
+    *fingerprint_out = ptr::null_mut();
+
+    let verify_wrapper = &*verify_cert;
+    if verify_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let verify_cert_ref = &*verify_wrapper.0;
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+    let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+    let password: Password = passphrase_str.into();
+
+    let policy = &StandardPolicy::new();
+    let helper = SymmetricDecryptAndVerifyHelper {
+        password,
+        verify_cert: verify_cert_ref,
+        signer_fp: None,
+    };
+
+    let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(d) => d,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let mut out = Vec::new();
+    if decryptor.read_to_end(&mut out).is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let text = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let helper = decryptor.into_helper();
+    let fp = match helper.signer_fp {
+        Some(fp) => fp,
+        None => return FFIError::Failed as i32,
+    };
+
+    let r = write_c_string(&text, plaintext_out);
+    if r != 0 {
+        return r;
+    }
+    let r = write_c_string(&fp, fingerprint_out);
+    if r != 0 {
+        libc::free(*plaintext_out as *mut libc::c_void);
+        *plaintext_out = ptr::null_mut();
+    }
+    r
+}
+
 /// Merge updates from `other_cert` into `base_cert`: new signatures,
 /// certifications, subkeys, and revocations: writing the combined
 /// certificate to `*new_cert`. This is the counterpart to importing a
@@ -4121,6 +4344,134 @@ mod tests {
 
             pgp_certificate_free(alice);
             pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn encrypt_and_sign_symmetric_decrypt_and_verify_symmetric_round_trip() {
+        unsafe {
+            let alice = generate_cert("symmetric-sign-alice@example.org");
+            let plaintext = CString::new("sign+symmetric rust test payload").unwrap();
+            let passphrase = CString::new("correct horse battery staple").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_encrypt_and_sign_string_symmetric(
+                    alice,
+                    plaintext.as_ptr(),
+                    passphrase.as_ptr(),
+                    &mut cipher,
+                ),
+                FFIError::Ok as i32
+            );
+
+            let cipher_c = CString::new(to_owned_c_string(cipher)).unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            let mut signer_fingerprint: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_and_verify_string_symmetric(
+                    alice,
+                    cipher_c.as_ptr(),
+                    passphrase.as_ptr(),
+                    &mut recovered,
+                    &mut signer_fingerprint,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(
+                to_owned_c_string(recovered),
+                "sign+symmetric rust test payload"
+            );
+            assert!(!signer_fingerprint.is_null());
+            libc::free(signer_fingerprint as *mut libc::c_void);
+
+            pgp_certificate_free(alice);
+        }
+    }
+
+    #[test]
+    fn decrypt_and_verify_symmetric_rejects_wrong_passphrase() {
+        unsafe {
+            let alice = generate_cert("symmetric-sign-wrong-pass@example.org");
+            let plaintext = CString::new("payload").unwrap();
+            let passphrase = CString::new("correct horse battery staple").unwrap();
+            let wrong_passphrase = CString::new("wrong passphrase").unwrap();
+
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_encrypt_and_sign_string_symmetric(
+                    alice,
+                    plaintext.as_ptr(),
+                    passphrase.as_ptr(),
+                    &mut cipher,
+                ),
+                FFIError::Ok as i32
+            );
+
+            let cipher_c = CString::new(to_owned_c_string(cipher)).unwrap();
+            let mut recovered: *mut libc::c_char = ptr::null_mut();
+            let mut signer_fingerprint: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_and_verify_string_symmetric(
+                    alice,
+                    cipher_c.as_ptr(),
+                    wrong_passphrase.as_ptr(),
+                    &mut recovered,
+                    &mut signer_fingerprint,
+                ),
+                FFIError::Failed as i32
+            );
+
+            pgp_certificate_free(alice);
+        }
+    }
+
+    #[test]
+    fn encrypt_and_sign_string_symmetric_rejects_null_args() {
+        unsafe {
+            let alice = generate_cert("symmetric-sign-null@example.org");
+            let plaintext = CString::new("payload").unwrap();
+            let passphrase = CString::new("pass").unwrap();
+            let mut cipher: *mut libc::c_char = ptr::null_mut();
+
+            assert_eq!(
+                pgp_encrypt_and_sign_string_symmetric(
+                    ptr::null(),
+                    plaintext.as_ptr(),
+                    passphrase.as_ptr(),
+                    &mut cipher,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_encrypt_and_sign_string_symmetric(
+                    alice,
+                    ptr::null(),
+                    passphrase.as_ptr(),
+                    &mut cipher,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_encrypt_and_sign_string_symmetric(
+                    alice,
+                    plaintext.as_ptr(),
+                    ptr::null(),
+                    &mut cipher,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_encrypt_and_sign_string_symmetric(
+                    alice,
+                    plaintext.as_ptr(),
+                    passphrase.as_ptr(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(alice);
         }
     }
 

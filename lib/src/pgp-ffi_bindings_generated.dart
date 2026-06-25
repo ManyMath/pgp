@@ -1662,6 +1662,85 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
+  /// Sign `plaintext` with `signer_cert` and encrypt it with `passphrase` (no
+  /// recipient public key required), writing a single ASCII-armored message to
+  /// `*armored_message`: the passphrase-only counterpart to
+  /// `pgp_encrypt_and_sign_string`. Caller must free `*armored_message` with
+  /// `free()`.
+  ///
+  /// # Safety
+  /// `signer_cert`, `plaintext`, `passphrase`, and `armored_message` must be
+  /// non-null.
+  int pgp_encrypt_and_sign_string_symmetric(
+    ffi.Pointer<Certificate> signer_cert,
+    ffi.Pointer<ffi.Char> plaintext,
+    ffi.Pointer<ffi.Char> passphrase,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> armored_message,
+  ) {
+    return _pgp_encrypt_and_sign_string_symmetric(
+      signer_cert,
+      plaintext,
+      passphrase,
+      armored_message,
+    );
+  }
+
+  late final _pgp_encrypt_and_sign_string_symmetricPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_encrypt_and_sign_string_symmetric');
+  late final _pgp_encrypt_and_sign_string_symmetric =
+      _pgp_encrypt_and_sign_string_symmetricPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
+  /// Decrypt a passphrase-encrypted, signed ASCII-armored message and verify
+  /// its signature against `verify_cert`: the passphrase-only counterpart to
+  /// `pgp_decrypt_and_verify_string`. Writes the plaintext to `*plaintext_out`
+  /// and the signer's fingerprint to `*fingerprint_out`; both must be freed
+  /// with `free()`. Returns `Failed` (-3) if the passphrase is wrong, the
+  /// message has no SKESK, or it carries no valid signature.
+  ///
+  /// # Safety
+  /// All pointers must be non-null.
+  int pgp_decrypt_and_verify_string_symmetric(
+    ffi.Pointer<Certificate> verify_cert,
+    ffi.Pointer<ffi.Char> armored_message,
+    ffi.Pointer<ffi.Char> passphrase,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext_out,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> fingerprint_out,
+  ) {
+    return _pgp_decrypt_and_verify_string_symmetric(
+      verify_cert,
+      armored_message,
+      passphrase,
+      plaintext_out,
+      fingerprint_out,
+    );
+  }
+
+  late final _pgp_decrypt_and_verify_string_symmetricPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_decrypt_and_verify_string_symmetric');
+  late final _pgp_decrypt_and_verify_string_symmetric =
+      _pgp_decrypt_and_verify_string_symmetricPtr.asFunction<
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
   /// Merge updates from `other_cert` into `base_cert`: new signatures,
   /// certifications, subkeys, and revocations: writing the combined
   /// certificate to `*new_cert`. This is the counterpart to importing a

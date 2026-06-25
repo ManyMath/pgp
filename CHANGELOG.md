@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Add `Certificate.encryptAndSignSymmetric(plaintext, passphrase)` and
+  `Certificate.decryptAndVerifySymmetric(message, passphrase)`: the
+  passphrase-only counterpart to `PGP.encryptAndSign`/
+  `Certificate.decryptAndVerify`, so a message can be passphrase-protected
+  without a recipient public key while still being signed and verifiable.
 - Add `Certificate.verifyUserIdCertification(issuer, userId)`,
   cryptographically confirming that `issuer` actually produced the
   third-party certification signature `userIdCertifications` reports:

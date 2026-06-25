@@ -408,6 +408,52 @@ int main(void) {
   }
   pgp_certificate_free(rsa_cert);
 
+  struct Certificate *symmetric_signer = NULL;
+  rc = pgp_key_generate("symmetric-signer@example.org", &symmetric_signer);
+  if (rc != 0 || symmetric_signer == NULL) {
+    fprintf(stderr, "pgp_key_generate (symmetric_signer) failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  char *symmetric_signed = NULL;
+  rc = pgp_encrypt_and_sign_string_symmetric(
+      symmetric_signer, "sign+symmetric test payload",
+      "correct horse battery staple", &symmetric_signed);
+  if (rc != 0 || symmetric_signed == NULL) {
+    fprintf(stderr,
+            "pgp_encrypt_and_sign_string_symmetric failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(symmetric_signer);
+    return 1;
+  }
+
+  char *symmetric_plaintext = NULL;
+  char *symmetric_signer_fp = NULL;
+  rc = pgp_decrypt_and_verify_string_symmetric(
+      symmetric_signer, symmetric_signed, "correct horse battery staple",
+      &symmetric_plaintext, &symmetric_signer_fp);
+  if (rc != 0 || symmetric_plaintext == NULL || symmetric_signer_fp == NULL ||
+      strcmp(symmetric_plaintext, "sign+symmetric test payload") != 0) {
+    fprintf(stderr,
+            "pgp_decrypt_and_verify_string_symmetric failed: rc=%" PRId32
+            " plaintext=%s\n",
+            rc, symmetric_plaintext ? symmetric_plaintext : "(null)");
+    free(symmetric_signed);
+    if (symmetric_plaintext != NULL) free(symmetric_plaintext);
+    if (symmetric_signer_fp != NULL) free(symmetric_signer_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(symmetric_signer);
+    return 1;
+  }
+  free(symmetric_signed);
+  free(symmetric_plaintext);
+  free(symmetric_signer_fp);
+  pgp_certificate_free(symmetric_signer);
+
   char *armored = NULL;
   rc = pgp_certificate_export_armored(cert, &armored);
   if (rc != 0 || armored == NULL) {

@@ -1052,6 +1052,62 @@ class Certificate {
     }
   }
 
+  /// Signs [plaintext] with this secret certificate and encrypts it with
+  /// [passphrase] (no recipient public key required): the passphrase-only
+  /// counterpart to [PGP.encryptAndSign]. Returns a single ASCII-armored
+  /// message; decrypt and verify it with [decryptAndVerifySymmetric].
+  String encryptAndSignSymmetric(String plaintext, String passphrase) {
+    final ptPtr = plaintext.toNativeUtf8();
+    final ppPtr = passphrase.toNativeUtf8();
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_encrypt_and_sign_string_symmetric(
+          _ptr, ptPtr.cast(), ppPtr.cast(), out);
+      if (code != 0) throw PgpException(code);
+      final result = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      return result;
+    } finally {
+      calloc.free(ptPtr);
+      calloc.free(ppPtr);
+      calloc.free(out);
+    }
+  }
+
+  /// Decrypts a passphrase-encrypted, signed [message] (produced by
+  /// [encryptAndSignSymmetric]) using [passphrase], verifying the signature
+  /// against this certificate: the passphrase-only counterpart to
+  /// [decryptAndVerify].
+  ///
+  /// Throws [PgpException] if the passphrase is wrong, the message has no
+  /// SKESK, or it carries no valid signature from this certificate.
+  SignedPlaintext decryptAndVerifySymmetric(String message, String passphrase) {
+    final msgPtr = message.toNativeUtf8();
+    final ppPtr = passphrase.toNativeUtf8();
+    final plaintextOut = calloc<Pointer<Char>>();
+    final fpOut = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_decrypt_and_verify_string_symmetric(
+        _ptr,
+        msgPtr.cast(),
+        ppPtr.cast(),
+        plaintextOut,
+        fpOut,
+      );
+      if (code != 0) throw PgpException(code);
+      final pt = plaintextOut.value.cast<Utf8>().toDartString();
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      calloc.free(plaintextOut.value);
+      calloc.free(fpOut.value);
+      return SignedPlaintext(plaintext: pt, signerFingerprint: fp);
+    } finally {
+      calloc.free(msgPtr);
+      calloc.free(ppPtr);
+      calloc.free(plaintextOut);
+      calloc.free(fpOut);
+    }
+  }
+
   /// Frees the native certificate.  The handle must not be used afterwards.
   void dispose() => _bindings.pgp_certificate_free(_ptr);
 
