@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Add `Certificate.userIdsInfo()`, returning a `UserIdInfo` per user ID
+  (revocation status, primary-user-ID flag, binding-signature expiry) using
+  the same coverage as `userIds()`: closing the gap where `subkeys()` had
+  rich metadata but the user ID equivalent didn't.
 - Add `Certificate.certifyUserId(target, userId)`, a third-party
   certification primitive: certify another certificate's user ID with this
   certificate's key ("Alice vouches that this user ID belongs to Bob"),
