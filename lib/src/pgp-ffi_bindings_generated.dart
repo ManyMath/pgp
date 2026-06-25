@@ -499,6 +499,60 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
+  /// Have `signing_cert` revoke its own earlier third-party certification of
+  /// `user_id` on `target_cert` (the counterpart to
+  /// `pgp_certificate_certify_userid`), writing the updated copy of
+  /// `target_cert`: now carrying `signing_cert`'s certification-revocation
+  /// signature on that user ID: to `*new_cert`. `target_cert` itself is left
+  /// unmodified; `signing_cert`'s certification-capable secret key material
+  /// must be present and unencrypted. `reason` is an RFC 4880
+  /// reason-for-revocation code; `message` is an optional human-readable
+  /// explanation (pass null for none). Returns NotFound if `user_id` is not
+  /// present on `target_cert`.
+  /// Caller must free `*new_cert` with `pgp_certificate_free`.
+  ///
+  /// # Safety
+  /// `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be
+  /// non-null. `message`, if non-null, must be a valid NUL-terminated C
+  /// string.
+  int pgp_certificate_revoke_userid_certification(
+    ffi.Pointer<Certificate> signing_cert,
+    ffi.Pointer<Certificate> target_cert,
+    ffi.Pointer<ffi.Char> user_id,
+    int reason,
+    ffi.Pointer<ffi.Char> message,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_revoke_userid_certification(
+      signing_cert,
+      target_cert,
+      user_id,
+      reason,
+      message,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_revoke_userid_certificationPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Uint8,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_revoke_userid_certification');
+  late final _pgp_certificate_revoke_userid_certification =
+      _pgp_certificate_revoke_userid_certificationPtr.asFunction<
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              int,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
   /// Encrypt `plaintext` to all `count` recipient certificates and write a single
   /// ASCII-armored message to `*armored_message`. Any recipient whose private key
   /// is available can decrypt. Returns NotFound if `count` is zero or no cert
