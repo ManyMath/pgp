@@ -875,6 +875,77 @@ pub unsafe extern "C" fn pgp_certificate_add_userid(
     FFIError::Ok as i32
 }
 
+/// Have `signing_cert` certify `user_id` on `target_cert` (a third-party
+/// certification, e.g. "Alice vouches that this user ID belongs to Bob"),
+/// writing the updated copy of `target_cert`: now carrying `signing_cert`'s
+/// certification signature on that user ID: to `*new_cert`. `target_cert`
+/// itself is left unmodified; `signing_cert`'s certification-capable secret
+/// key material must be present and unencrypted. Returns NotFound if
+/// `user_id` is not present on `target_cert`.
+/// Caller must free `*new_cert` with `pgp_certificate_free`.
+///
+/// # Safety
+/// `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_certify_userid(
+    signing_cert: *const Certificate,
+    target_cert: *const Certificate,
+    user_id: *const libc::c_char,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if signing_cert.is_null()
+        || target_cert.is_null()
+        || user_id.is_null()
+        || new_cert.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let signing_wrapper = &*signing_cert;
+    let target_wrapper = &*target_cert;
+    if signing_wrapper.0.is_null() || target_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let signing_cert = &*signing_wrapper.0;
+    let target_cert = (&*target_wrapper.0).clone();
+
+    let user_id_str = match CStr::from_ptr(user_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let target_uid = match target_cert
+        .userids()
+        .find(|ua| ua.userid().value() == user_id_str.as_bytes())
+    {
+        Some(ua) => ua.userid().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+
+    let mut signer = match signing_cert.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig = match target_uid.certify(&mut signer, &target_cert, None, None, None) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match target_cert.insert_packets(vec![sig]) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 /// Encrypt `plaintext` to all `count` recipient certificates and write a single
 /// ASCII-armored message to `*armored_message`. Any recipient whose private key
 /// is available can decrypt. Returns NotFound if `count` is zero or no cert
@@ -3580,6 +3651,139 @@ mod tests {
 
             pgp_certificate_free(cert);
             pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn certify_userid_attaches_third_party_signature() {
+        unsafe {
+            let alice = generate_cert("alice@example.org");
+            let bob = generate_cert("bob@example.org");
+            let user_id = CString::new("bob@example.org").unwrap();
+
+            let mut certified: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), &mut certified),
+                FFIError::Ok as i32
+            );
+            assert!(!certified.is_null());
+
+            let mut alice_fp: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_fingerprint(alice, &mut alice_fp),
+                FFIError::Ok as i32
+            );
+            let alice_fp_owned = CStr::from_ptr(alice_fp).to_str().unwrap().to_owned();
+            libc::free(alice_fp as *mut libc::c_void);
+            let alice_fp = alice_fp_owned;
+
+            let sequoia_cert = &*(&*certified).0;
+            let ua = sequoia_cert
+                .userids()
+                .find(|ua| ua.userid().value() == b"bob@example.org")
+                .unwrap();
+            let sig = ua
+                .certifications()
+                .find(|sig| {
+                    sig.issuer_fingerprints()
+                        .any(|fp| fp.to_hex() == alice_fp)
+                })
+                .expect("third-party certification from alice not found");
+            assert_eq!(sig.typ(), sequoia_openpgp::types::SignatureType::GenericCertification);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(certified);
+        }
+    }
+
+    #[test]
+    fn certify_userid_leaves_target_cert_unmodified() {
+        unsafe {
+            let alice = generate_cert("alice-untouched@example.org");
+            let bob = generate_cert("bob-untouched@example.org");
+            let user_id = CString::new("bob-untouched@example.org").unwrap();
+
+            let mut certified: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), &mut certified),
+                FFIError::Ok as i32
+            );
+
+            let original = &*(&*bob).0;
+            let ua = original
+                .userids()
+                .find(|ua| ua.userid().value() == b"bob-untouched@example.org")
+                .unwrap();
+            assert_eq!(ua.certifications().count(), 0);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(certified);
+        }
+    }
+
+    #[test]
+    fn certify_userid_rejects_missing_user_id() {
+        unsafe {
+            let alice = generate_cert("alice-missing@example.org");
+            let bob = generate_cert("bob-missing@example.org");
+            let user_id = CString::new("nobody@example.org").unwrap();
+
+            let mut certified: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), &mut certified),
+                FFIError::NotFound as i32
+            );
+            assert!(certified.is_null());
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn certify_userid_rejects_null_args() {
+        unsafe {
+            let alice = generate_cert("alice-null@example.org");
+            let bob = generate_cert("bob-null@example.org");
+            let user_id = CString::new("bob-null@example.org").unwrap();
+            let mut certified: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_certify_userid(
+                    ptr::null(),
+                    bob,
+                    user_id.as_ptr(),
+                    &mut certified
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_certify_userid(
+                    alice,
+                    ptr::null(),
+                    user_id.as_ptr(),
+                    &mut certified
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_certify_userid(alice, bob, ptr::null(), &mut certified),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_certify_userid(
+                    alice,
+                    bob,
+                    user_id.as_ptr(),
+                    ptr::null_mut()
+                ),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
         }
     }
 }

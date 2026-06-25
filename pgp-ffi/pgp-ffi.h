@@ -175,6 +175,24 @@ int32_t pgp_certificate_add_userid(const struct Certificate *cert,
                                    struct Certificate **new_cert);
 
 /**
+ * Have `signing_cert` certify `user_id` on `target_cert` (a third-party
+ * certification, e.g. "Alice vouches that this user ID belongs to Bob"),
+ * writing the updated copy of `target_cert`: now carrying `signing_cert`'s
+ * certification signature on that user ID: to `*new_cert`. `target_cert`
+ * itself is left unmodified; `signing_cert`'s certification-capable secret
+ * key material must be present and unencrypted. Returns NotFound if
+ * `user_id` is not present on `target_cert`.
+ * Caller must free `*new_cert` with `pgp_certificate_free`.
+ *
+ * # Safety
+ * `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_certify_userid(const struct Certificate *signing_cert,
+                                       const struct Certificate *target_cert,
+                                       const char *user_id,
+                                       struct Certificate **new_cert);
+
+/**
  * Encrypt `plaintext` to all `count` recipient certificates and write a single
  * ASCII-armored message to `*armored_message`. Any recipient whose private key
  * is available can decrypt. Returns NotFound if `count` is zero or no cert
