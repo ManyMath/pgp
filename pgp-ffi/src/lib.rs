@@ -14,7 +14,7 @@ use sequoia_openpgp::{
     policy::{Policy, StandardPolicy},
     serialize::stream::{Armorer, Encryptor, LiteralWriter, Message, Signer},
     serialize::Serialize,
-    types::{KeyFlags, ReasonForRevocation, RevocationStatus, SymmetricAlgorithm},
+    types::{KeyFlags, ReasonForRevocation, RevocationKey, RevocationStatus, SymmetricAlgorithm},
     KeyHandle, Result,
 };
 use std::ffi::CStr;
@@ -970,6 +970,272 @@ pub unsafe extern "C" fn pgp_certificate_apply_revocation_armored(
 
     let inner = Box::into_raw(Box::new(updated));
     *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
+/// Designate `revoker_cert` as authorized to revoke `cert` on its behalf:
+/// RFC 4880's designated-revoker mechanism (the `gpg --edit-key addrevoker`
+/// workflow), a recovery path for when `cert`'s own secret key or
+/// passphrase is later lost or compromised. Writes the updated cert,
+/// carrying an updated direct-key self-signature listing `revoker_cert` as
+/// an authorized revoker, to `*new_cert`; `cert` itself is left unmodified.
+/// Once this is applied and published, `revoker_cert`'s own secret key can
+/// later revoke `cert` via `pgp_certificate_generate_revocation_armored_by`
+/// even without access to `cert`'s secret key at all. `cert`'s
+/// certification-capable secret key material must be present and
+/// unencrypted; `revoker_cert` need not have any secret key material (only
+/// its public key and fingerprint are recorded). Returns `Failed` if `cert`
+/// has no direct-key signature to template from: every certificate
+/// produced by this library's own `pgp_key_generate*` functions has one.
+/// Caller must free `*new_cert` with `pgp_certificate_free`.
+///
+/// # Safety
+/// `cert`, `revoker_cert`, and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_add_designated_revoker(
+    cert: *const Certificate,
+    revoker_cert: *const Certificate,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || revoker_cert.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    let revoker_wrapper = &*revoker_cert;
+    if wrapper.0.is_null() || revoker_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = (&*wrapper.0).clone();
+    let revoker = &*revoker_wrapper.0;
+
+    let policy = StandardPolicy::new();
+    let vc = match sequoia_cert.with_policy(&policy, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    let template: sequoia_openpgp::packet::signature::SignatureBuilder =
+        match vc.direct_key_signature() {
+            Ok(sig) => sig.clone().into(),
+            Err(_) => return FFIError::Failed as i32,
+        };
+
+    let mut signer = match sequoia_cert.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig = match template
+        .set_signature_creation_time(SystemTime::now())
+        .and_then(|b| b.set_revocation_key(RevocationKey::from(revoker)))
+    {
+        Ok(b) => match b.sign_direct_key(&mut signer, None) {
+            Ok(s) => s,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match sequoia_cert.insert_packets(sig) {
+        Ok((c, _)) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
+/// Return one line per designated revoker configured on `cert` (via
+/// `pgp_certificate_add_designated_revoker`): `fingerprint\tsensitive`,
+/// where `sensitive` is `1`/`0`: RFC 4880's "sensitive revocation key"
+/// flag, a hint that implementations should not publish the relationship
+/// to keyservers. The list is deduplicated (same convention as Sequoia's
+/// own `Cert::revocation_keys`). Writes an empty string if none are
+/// configured.
+/// Caller must free `*out` with `free()`.
+///
+/// # Safety
+/// `cert` and `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_revocation_keys(
+    cert: *const Certificate,
+    out: *mut *mut libc::c_char,
+) -> i32 {
+    if cert.is_null() || out.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let sequoia_cert = &*wrapper.0;
+    let policy = StandardPolicy::new();
+
+    let lines: Vec<String> = sequoia_cert
+        .revocation_keys(&policy)
+        .map(|rk| {
+            let (_, fp) = rk.revoker();
+            format!("{}\t{}", fp, if rk.sensitive() { 1 } else { 0 })
+        })
+        .collect();
+    write_c_string(&lines.join("\n"), out)
+}
+
+/// Build a standalone, ASCII-armored revocation certificate for
+/// `target_cert`, signed by `revoker_cert` rather than by `target_cert`
+/// itself: the counterpart to `pgp_certificate_generate_revocation_armored`
+/// for a designated revoker (`pgp_certificate_add_designated_revoker`) to
+/// use when `target_cert`'s own secret key or passphrase has been lost or
+/// compromised. `revoker_cert`'s certification-capable secret key material
+/// must be present and unencrypted; `target_cert` need not have any secret
+/// key material at all. Apply the resulting signature with the existing
+/// `pgp_certificate_apply_revocation_armored`, exactly as with a
+/// self-generated revocation certificate: that function does not care who
+/// produced the signature, only that it verifies. Uses the same reason code
+/// and message conventions as `pgp_certificate_revoke`. This function does
+/// not check that `target_cert` actually lists `revoker_cert` as a
+/// designated revoker (that check happens on verification, when the
+/// revocation is applied and validated against `target_cert`'s own
+/// `revocation_keys()`); it only produces the signature.
+/// Caller must free `*armored` with `free()`.
+///
+/// # Safety
+/// `revoker_cert`, `target_cert`, and `armored` must be non-null. `message`,
+/// if non-null, must be a valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_generate_revocation_armored_by(
+    revoker_cert: *const Certificate,
+    target_cert: *const Certificate,
+    reason: u8,
+    message: *const libc::c_char,
+    armored: *mut *mut libc::c_char,
+) -> i32 {
+    if revoker_cert.is_null() || target_cert.is_null() || armored.is_null() {
+        return FFIError::Null as i32;
+    }
+    *armored = ptr::null_mut();
+
+    let revoker_wrapper = &*revoker_cert;
+    let target_wrapper = &*target_cert;
+    if revoker_wrapper.0.is_null() || target_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let revoker = &*revoker_wrapper.0;
+    let target = &*target_wrapper.0;
+
+    let message_bytes = match revocation_message_bytes(message) {
+        Ok(b) => b,
+        Err(code) => return code,
+    };
+
+    let mut signer = match revoker.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig = match CertRevocationBuilder::new()
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes)
+    {
+        Ok(b) => match b.build(&mut signer, target, None) {
+            Ok(sig) => sig,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut out = Vec::new();
+    let msg = Message::new(&mut out);
+    let mut armorer = match Armorer::new(msg).kind(armor::Kind::Signature).build() {
+        Ok(a) => a,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    if sequoia_openpgp::serialize::Marshal::serialize(&sig, &mut armorer).is_err() {
+        return FFIError::Failed as i32;
+    }
+    if armorer.finalize().is_err() {
+        return FFIError::Failed as i32;
+    }
+
+    let armored_string = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(_) => return FFIError::Failed as i32,
+    };
+    write_c_string(&armored_string, armored)
+}
+
+/// Cryptographically verify a designated-revoker revocation applied to
+/// `target_cert` (e.g. via `pgp_certificate_apply_revocation_armored` with a
+/// signature from `pgp_certificate_generate_revocation_armored_by`).
+///
+/// A revocation signed by a key other than `target_cert`'s own primary key
+/// lands in Sequoia's "unconfirmed" revocation bucket (`RevocationStatus::
+/// CouldBe`, *not* `Revoked`): `pgp_certificate_revocation_info` and
+/// `pgp_certificate_revoke`'s own bookkeeping deliberately do not surface it
+/// as revoked, since blindly trusting a signature merely because it claims a
+/// given issuer would let anyone forge a "revocation" from a fingerprint they
+/// don't control. This function does the two checks needed to actually trust
+/// one: (1) `revoker_cert`'s fingerprint is genuinely listed among
+/// `target_cert`'s own designated revokers (`pgp_certificate_revocation_keys`
+/// / `pgp_certificate_add_designated_revoker`), and (2) the revocation
+/// signature verifies cryptographically against `revoker_cert`'s own primary
+/// key. Writes `1`/`0` to `*out_verified`. Returns `NotFound` if
+/// `target_cert` carries no unconfirmed revocation signature issued by
+/// `revoker_cert`'s fingerprint at all.
+///
+/// # Safety
+/// `target_cert`, `revoker_cert`, and `out_verified` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_designated_revocation(
+    target_cert: *const Certificate,
+    revoker_cert: *const Certificate,
+    out_verified: *mut u8,
+) -> i32 {
+    if target_cert.is_null() || revoker_cert.is_null() || out_verified.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out_verified = 0;
+
+    let target_wrapper = &*target_cert;
+    let revoker_wrapper = &*revoker_cert;
+    if target_wrapper.0.is_null() || revoker_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let target = &*target_wrapper.0;
+    let revoker = &*revoker_wrapper.0;
+
+    let policy = StandardPolicy::new();
+    let revoker_handle = KeyHandle::from(revoker.fingerprint());
+    let is_designated = target
+        .revocation_keys(&policy)
+        .any(|rk| *rk.revoker().1 == revoker.fingerprint());
+    if !is_designated {
+        return FFIError::NotFound as i32;
+    }
+
+    let sig = match target.revocation_status(&policy, None) {
+        RevocationStatus::CouldBe(sigs) | RevocationStatus::Revoked(sigs) => sigs
+            .into_iter()
+            .find(|sig| sig.get_issuers().iter().any(|kh| kh.aliases(&revoker_handle))),
+        RevocationStatus::NotAsFarAsWeKnow => None,
+    };
+    let sig = match sig {
+        Some(sig) => sig,
+        None => return FFIError::NotFound as i32,
+    };
+
+    let verified = sig
+        .verify_primary_key_revocation(revoker.primary_key().key(), target.primary_key().key())
+        .is_ok();
+    *out_verified = verified as u8;
     FFIError::Ok as i32
 }
 
@@ -6608,6 +6874,254 @@ mod tests {
 
             pgp_certificate_free(base);
             pgp_certificate_free(other);
+        }
+    }
+
+    // --- designated revoker ---
+
+    #[test]
+    fn revocation_keys_empty_for_fresh_cert() {
+        unsafe {
+            let cert = generate_cert("designated-revoker-fresh@example.org");
+
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_revocation_keys(cert, &mut out), FFIError::Ok as i32);
+            assert_eq!(to_owned_c_string(out), "");
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn add_designated_revoker_lists_revoker() {
+        unsafe {
+            let alice = generate_cert("designated-revoker-alice@example.org");
+            let bob = generate_cert("designated-revoker-bob@example.org");
+
+            let mut bob_fp: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_fingerprint(bob, &mut bob_fp), FFIError::Ok as i32);
+            let bob_fp = to_owned_c_string(bob_fp);
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_designated_revoker(alice, bob, &mut updated),
+                FFIError::Ok as i32
+            );
+            assert!(!updated.is_null());
+
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_revocation_keys(updated, &mut out), FFIError::Ok as i32);
+            assert_eq!(to_owned_c_string(out), format!("{bob_fp}\t0"));
+
+            // The source cert must be untouched.
+            let mut alice_out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_certificate_revocation_keys(alice, &mut alice_out), FFIError::Ok as i32);
+            assert_eq!(to_owned_c_string(alice_out), "");
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn add_designated_revoker_rejects_null_args() {
+        unsafe {
+            let alice = generate_cert("designated-revoker-null@example.org");
+            let bob = generate_cert("designated-revoker-null-bob@example.org");
+            let mut updated: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_add_designated_revoker(ptr::null(), bob, &mut updated),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_add_designated_revoker(alice, ptr::null(), &mut updated),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_add_designated_revoker(alice, bob, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn generate_revocation_armored_by_produces_applicable_revocation() {
+        unsafe {
+            let alice = generate_cert("designated-revoker-flow-alice@example.org");
+            let bob = generate_cert("designated-revoker-flow-bob@example.org");
+
+            let mut alice_with_revoker: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_designated_revoker(alice, bob, &mut alice_with_revoker),
+                FFIError::Ok as i32
+            );
+
+            let message = CString::new("alice lost her key").unwrap();
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored_by(
+                    bob,
+                    alice_with_revoker,
+                    ReasonForRevocation::KeyCompromised.into(),
+                    message.as_ptr(),
+                    &mut armored,
+                ),
+                FFIError::Ok as i32
+            );
+            let armored_str = to_owned_c_string(armored);
+            assert!(armored_str.contains("BEGIN PGP SIGNATURE"));
+
+            let armored_c = CString::new(armored_str).unwrap();
+            let mut revoked_cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_apply_revocation_armored(
+                    alice_with_revoker,
+                    armored_c.as_ptr(),
+                    &mut revoked_cert,
+                ),
+                FFIError::Ok as i32
+            );
+
+            // A third-party revocation lands in Sequoia's unconfirmed
+            // ("CouldBe") bucket, not the plain "Revoked" status that
+            // `pgp_certificate_revocation_info` reports on: trusting it
+            // requires the explicit designated-revoker check below.
+            let mut revoked: u8 = 1;
+            let mut reason: u8 = 0;
+            let mut msg: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revocation_info(revoked_cert, &mut revoked, &mut reason, &mut msg),
+                FFIError::Ok as i32
+            );
+            assert_eq!(revoked, 0);
+            libc::free(msg as *mut libc::c_void);
+
+            let mut verified: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_designated_revocation(revoked_cert, bob, &mut verified),
+                FFIError::Ok as i32
+            );
+            assert_eq!(verified, 1);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(alice_with_revoker);
+            pgp_certificate_free(revoked_cert);
+        }
+    }
+
+    #[test]
+    fn verify_designated_revocation_rejects_undeclared_revoker() {
+        unsafe {
+            let alice = generate_cert("designated-revoker-verify-undeclared-alice@example.org");
+            let bob = generate_cert("designated-revoker-verify-undeclared-bob@example.org");
+
+            // Bob was never designated, but forges an armored revocation and
+            // it gets applied anyway (e.g. by a naive caller) -- verification
+            // must still reject it since Alice never authorized Bob.
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored_by(
+                    bob,
+                    alice,
+                    0,
+                    ptr::null(),
+                    &mut armored,
+                ),
+                FFIError::Ok as i32
+            );
+            let armored_str = to_owned_c_string(armored);
+            let armored_c = CString::new(armored_str).unwrap();
+
+            let mut revoked_cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_apply_revocation_armored(alice, armored_c.as_ptr(), &mut revoked_cert),
+                FFIError::Ok as i32
+            );
+
+            let mut verified: u8 = 1;
+            assert_eq!(
+                pgp_certificate_verify_designated_revocation(revoked_cert, bob, &mut verified),
+                FFIError::NotFound as i32
+            );
+            assert_eq!(verified, 0);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(revoked_cert);
+        }
+    }
+
+    #[test]
+    fn verify_designated_revocation_rejects_null_args() {
+        unsafe {
+            let alice = generate_cert("designated-revoker-verify-null-alice@example.org");
+            let bob = generate_cert("designated-revoker-verify-null-bob@example.org");
+            let mut verified: u8 = 0;
+
+            assert_eq!(
+                pgp_certificate_verify_designated_revocation(ptr::null(), bob, &mut verified),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_verify_designated_revocation(alice, ptr::null(), &mut verified),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_verify_designated_revocation(alice, bob, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn generate_revocation_armored_by_rejects_null_args() {
+        unsafe {
+            let alice = generate_cert("designated-revoker-null-flow-alice@example.org");
+            let bob = generate_cert("designated-revoker-null-flow-bob@example.org");
+            let mut armored: *mut libc::c_char = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored_by(
+                    ptr::null(),
+                    alice,
+                    0,
+                    ptr::null(),
+                    &mut armored,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored_by(
+                    bob,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    &mut armored,
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_generate_revocation_armored_by(
+                    bob,
+                    alice,
+                    0,
+                    ptr::null(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
         }
     }
 }

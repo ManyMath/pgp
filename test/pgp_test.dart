@@ -210,6 +210,75 @@ void main() {
     cert.dispose();
   });
 
+  group('designated revoker', () {
+    test('revocationKeys is empty for a fresh certificate', () {
+      final cert = pgp.generateKey('someone@example.org');
+      expect(cert.revocationKeys(), isEmpty);
+      cert.dispose();
+    });
+
+    test('addDesignatedRevoker lists the revoker', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+
+      final updated = alice.addDesignatedRevoker(bob);
+      final keys = updated.revocationKeys();
+      expect(keys, hasLength(1));
+      expect(keys.first.fingerprint, bob.fingerprint());
+      expect(keys.first.sensitive, isFalse);
+
+      // The source certificate must be untouched.
+      expect(alice.revocationKeys(), isEmpty);
+
+      updated.dispose();
+      bob.dispose();
+      alice.dispose();
+    });
+
+    test(
+        'generateRevocationArmoredFor + applyRevocationArmored + '
+        'verifyDesignatedRevocation round trip', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final aliceWithRevoker = alice.addDesignatedRevoker(bob);
+
+      final armored = bob.generateRevocationArmoredFor(
+        aliceWithRevoker,
+        reason: RevocationReason.keyCompromised,
+        message: 'alice lost her key',
+      );
+      expect(armored, contains('BEGIN PGP SIGNATURE'));
+
+      final revoked = aliceWithRevoker.applyRevocationArmored(armored);
+
+      // A third-party revocation isn't reflected by revocationInfo until
+      // it's cryptographically confirmed via verifyDesignatedRevocation.
+      expect(revoked.revocationInfo().isRevoked, isFalse);
+      expect(revoked.verifyDesignatedRevocation(bob), isTrue);
+
+      revoked.dispose();
+      aliceWithRevoker.dispose();
+      bob.dispose();
+      alice.dispose();
+    });
+
+    test('verifyDesignatedRevocation returns false for an undeclared revoker',
+        () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+
+      // Bob was never designated as a revoker for Alice.
+      final armored = bob.generateRevocationArmoredFor(alice);
+      final revoked = alice.applyRevocationArmored(armored);
+
+      expect(revoked.verifyDesignatedRevocation(bob), isFalse);
+
+      revoked.dispose();
+      bob.dispose();
+      alice.dispose();
+    });
+  });
+
   test('addSigningSubkey returns an updated certificate', () {
     final cert = pgp.generateKey('someone@example.org');
     final updated = cert.addSigningSubkey();

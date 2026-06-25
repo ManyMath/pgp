@@ -1,3 +1,16 @@
+## Unreleased
+
+- Added designated-revoker support (RFC 4880's `gpg --edit-key addrevoker`
+  mechanism): `Certificate.addDesignatedRevoker` authorizes another
+  certificate to revoke this one on its behalf (a recovery path for a lost
+  or compromised secret key/passphrase); `Certificate.revocationKeys` lists
+  configured revokers; `Certificate.generateRevocationArmoredFor` lets the
+  designated revoker produce a standalone armored revocation for the target
+  (applied via the existing `applyRevocationArmored`); and
+  `Certificate.verifyDesignatedRevocation` cryptographically confirms such a
+  revocation was genuinely authorized, since a third-party revocation signature
+  is not automatically reflected by `revocationInfo`.
+
 ## 0.0.1-dev.9
 
 - Upgraded dev-only tooling dependencies: `ffigen` from 14.x to 20.1.1 and

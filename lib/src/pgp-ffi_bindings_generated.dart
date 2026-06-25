@@ -501,6 +501,173 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<Certificate>>)>();
 
+  /// Designate `revoker_cert` as authorized to revoke `cert` on its behalf:
+  /// RFC 4880's designated-revoker mechanism (the `gpg --edit-key addrevoker`
+  /// workflow), a recovery path for when `cert`'s own secret key or
+  /// passphrase is later lost or compromised. Writes the updated cert,
+  /// carrying an updated direct-key self-signature listing `revoker_cert` as
+  /// an authorized revoker, to `*new_cert`; `cert` itself is left unmodified.
+  /// Once this is applied and published, `revoker_cert`'s own secret key can
+  /// later revoke `cert` via `pgp_certificate_generate_revocation_armored_by`
+  /// even without access to `cert`'s secret key at all. `cert`'s
+  /// certification-capable secret key material must be present and
+  /// unencrypted; `revoker_cert` need not have any secret key material (only
+  /// its public key and fingerprint are recorded). Returns `Failed` if `cert`
+  /// has no direct-key signature to template from: every certificate
+  /// produced by this library's own `pgp_key_generate*` functions has one.
+  /// Caller must free `*new_cert` with `pgp_certificate_free`.
+  ///
+  /// # Safety
+  /// `cert`, `revoker_cert`, and `new_cert` must be non-null.
+  int pgp_certificate_add_designated_revoker(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<Certificate> revoker_cert,
+    ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
+  ) {
+    return _pgp_certificate_add_designated_revoker(
+      cert,
+      revoker_cert,
+      new_cert,
+    );
+  }
+
+  late final _pgp_certificate_add_designated_revokerPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
+      'pgp_certificate_add_designated_revoker');
+  late final _pgp_certificate_add_designated_revoker =
+      _pgp_certificate_add_designated_revokerPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
+  /// Return one line per designated revoker configured on `cert` (via
+  /// `pgp_certificate_add_designated_revoker`): `fingerprint\tsensitive`,
+  /// where `sensitive` is `1`/`0`: RFC 4880's "sensitive revocation key"
+  /// flag, a hint that implementations should not publish the relationship
+  /// to keyservers. The list is deduplicated (same convention as Sequoia's
+  /// own `Cert::revocation_keys`). Writes an empty string if none are
+  /// configured.
+  /// Caller must free `*out` with `free()`.
+  ///
+  /// # Safety
+  /// `cert` and `out` must be non-null.
+  int pgp_certificate_revocation_keys(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> out,
+  ) {
+    return _pgp_certificate_revocation_keys(
+      cert,
+      out,
+    );
+  }
+
+  late final _pgp_certificate_revocation_keysPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<Certificate>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_revocation_keys');
+  late final _pgp_certificate_revocation_keys =
+      _pgp_certificate_revocation_keysPtr.asFunction<
+          int Function(
+              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
+  /// Build a standalone, ASCII-armored revocation certificate for
+  /// `target_cert`, signed by `revoker_cert` rather than by `target_cert`
+  /// itself: the counterpart to `pgp_certificate_generate_revocation_armored`
+  /// for a designated revoker (`pgp_certificate_add_designated_revoker`) to
+  /// use when `target_cert`'s own secret key or passphrase has been lost or
+  /// compromised. `revoker_cert`'s certification-capable secret key material
+  /// must be present and unencrypted; `target_cert` need not have any secret
+  /// key material at all. Apply the resulting signature with the existing
+  /// `pgp_certificate_apply_revocation_armored`, exactly as with a
+  /// self-generated revocation certificate: that function does not care who
+  /// produced the signature, only that it verifies. Uses the same reason code
+  /// and message conventions as `pgp_certificate_revoke`. This function does
+  /// not check that `target_cert` actually lists `revoker_cert` as a
+  /// designated revoker (that check happens on verification, when the
+  /// revocation is applied and validated against `target_cert`'s own
+  /// `revocation_keys()`); it only produces the signature.
+  /// Caller must free `*armored` with `free()`.
+  ///
+  /// # Safety
+  /// `revoker_cert`, `target_cert`, and `armored` must be non-null. `message`,
+  /// if non-null, must be a valid NUL-terminated C string.
+  int pgp_certificate_generate_revocation_armored_by(
+    ffi.Pointer<Certificate> revoker_cert,
+    ffi.Pointer<Certificate> target_cert,
+    int reason,
+    ffi.Pointer<ffi.Char> message,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> armored,
+  ) {
+    return _pgp_certificate_generate_revocation_armored_by(
+      revoker_cert,
+      target_cert,
+      reason,
+      message,
+      armored,
+    );
+  }
+
+  late final _pgp_certificate_generate_revocation_armored_byPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(
+                  ffi.Pointer<Certificate>,
+                  ffi.Pointer<Certificate>,
+                  ffi.Uint8,
+                  ffi.Pointer<ffi.Char>,
+                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+      'pgp_certificate_generate_revocation_armored_by');
+  late final _pgp_certificate_generate_revocation_armored_by =
+      _pgp_certificate_generate_revocation_armored_byPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>, int,
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+
+  /// Cryptographically verify a designated-revoker revocation applied to
+  /// `target_cert` (e.g. via `pgp_certificate_apply_revocation_armored` with a
+  /// signature from `pgp_certificate_generate_revocation_armored_by`).
+  ///
+  /// A revocation signed by a key other than `target_cert`'s own primary key
+  /// lands in Sequoia's "unconfirmed" revocation bucket (`RevocationStatus::
+  /// CouldBe`, *not* `Revoked`): `pgp_certificate_revocation_info` and
+  /// `pgp_certificate_revoke`'s own bookkeeping deliberately do not surface it
+  /// as revoked, since blindly trusting a signature merely because it claims a
+  /// given issuer would let anyone forge a "revocation" from a fingerprint they
+  /// don't control. This function does the two checks needed to actually trust
+  /// one: (1) `revoker_cert`'s fingerprint is genuinely listed among
+  /// `target_cert`'s own designated revokers (`pgp_certificate_revocation_keys`
+  /// / `pgp_certificate_add_designated_revoker`), and (2) the revocation
+  /// signature verifies cryptographically against `revoker_cert`'s own primary
+  /// key. Writes `1`/`0` to `*out_verified`. Returns `NotFound` if
+  /// `target_cert` carries no unconfirmed revocation signature issued by
+  /// `revoker_cert`'s fingerprint at all.
+  ///
+  /// # Safety
+  /// `target_cert`, `revoker_cert`, and `out_verified` must be non-null.
+  int pgp_certificate_verify_designated_revocation(
+    ffi.Pointer<Certificate> target_cert,
+    ffi.Pointer<Certificate> revoker_cert,
+    ffi.Pointer<ffi.Uint8> out_verified,
+  ) {
+    return _pgp_certificate_verify_designated_revocation(
+      target_cert,
+      revoker_cert,
+      out_verified,
+    );
+  }
+
+  late final _pgp_certificate_verify_designated_revocationPtr = _lookup<
+          ffi.NativeFunction<
+              ffi.Int32 Function(ffi.Pointer<Certificate>,
+                  ffi.Pointer<Certificate>, ffi.Pointer<ffi.Uint8>)>>(
+      'pgp_certificate_verify_designated_revocation');
+  late final _pgp_certificate_verify_designated_revocation =
+      _pgp_certificate_verify_designated_revocationPtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Uint8>)>();
+
   /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
   ///
   /// # Safety

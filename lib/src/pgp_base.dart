@@ -185,6 +185,23 @@ class CertifierInfo {
   });
 }
 
+/// A designated revoker configured on a certificate via
+/// [Certificate.addDesignatedRevoker], as reported by
+/// [Certificate.revocationKeys].
+class DesignatedRevoker {
+  /// 40-character uppercase hex fingerprint of the authorized revoker.
+  final String fingerprint;
+
+  /// RFC 4880's "sensitive revocation key" flag: a hint that
+  /// implementations should not publish this relationship to keyservers.
+  final bool sensitive;
+
+  const DesignatedRevoker({
+    required this.fingerprint,
+    required this.sensitive,
+  });
+}
+
 /// Whole-certificate revocation status returned by
 /// [Certificate.revocationInfo].
 class RevocationInfo {
@@ -486,6 +503,105 @@ class Certificate {
           _ptr, armoredPointer.cast(), out));
     } finally {
       calloc.free(armoredPointer);
+    }
+  }
+
+  /// Designates [revoker] as authorized to revoke this certificate on its
+  /// behalf: RFC 4880's designated-revoker mechanism (the
+  /// `gpg --edit-key addrevoker` workflow), a recovery path for when this
+  /// certificate's own secret key or passphrase is later lost or
+  /// compromised. Returns an updated copy of this certificate; the receiver
+  /// is left unmodified. Once published, [revoker]'s own secret key can
+  /// later revoke this certificate via [generateRevocationArmoredFor], even
+  /// without access to this certificate's secret key at all.
+  ///
+  /// Throws [PgpException] if this certificate's certification-capable
+  /// secret key isn't available.
+  Certificate addDesignatedRevoker(Certificate revoker) {
+    return _derive((out) => _bindings.pgp_certificate_add_designated_revoker(
+        _ptr, revoker._ptr, out));
+  }
+
+  /// Returns the designated revokers configured on this certificate (via
+  /// [addDesignatedRevoker]), deduplicated.
+  List<DesignatedRevoker> revocationKeys() {
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_revocation_keys(_ptr, out);
+      if (code != 0) throw PgpException(code);
+      final raw = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      if (raw.isEmpty) return [];
+      return raw.split('\n').map((line) {
+        final fields = line.split('\t');
+        return DesignatedRevoker(
+          fingerprint: fields[0],
+          sensitive: fields[1] == '1',
+        );
+      }).toList();
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Generates a standalone, ASCII-armored revocation certificate for
+  /// [target], signed by this certificate rather than by [target] itself:
+  /// the counterpart to [generateRevocationArmored] for a designated
+  /// revoker ([addDesignatedRevoker]) to use when [target]'s own secret key
+  /// or passphrase has been lost or compromised. This certificate's
+  /// certification-capable secret key must be available; [target] need not
+  /// have any secret key material at all. Apply the result with
+  /// [applyRevocationArmored] on [target], exactly as with a self-generated
+  /// revocation certificate, then confirm it with
+  /// [target].[verifyDesignatedRevocation].
+  ///
+  /// [reason] and [message] use the same conventions as [revoke].
+  String generateRevocationArmoredFor(
+    Certificate target, {
+    RevocationReason reason = RevocationReason.unspecified,
+    String? message,
+  }) {
+    final messagePointer = message?.toNativeUtf8();
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_generate_revocation_armored_by(
+        _ptr,
+        target._ptr,
+        reason.code,
+        messagePointer?.cast() ?? nullptr,
+        out,
+      );
+      if (code != 0) throw PgpException(code);
+      final armored = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      return armored;
+    } finally {
+      if (messagePointer != null) calloc.free(messagePointer);
+      calloc.free(out);
+    }
+  }
+
+  /// Cryptographically verifies that this certificate's revocation was
+  /// genuinely authorized by [revoker] as a designated revoker.
+  ///
+  /// A revocation signed by a key other than this certificate's own primary
+  /// key (e.g. one applied via [applyRevocationArmored] using a signature
+  /// from [generateRevocationArmoredFor]) is *not* reflected by
+  /// [revocationInfo]: trusting it requires confirming both that [revoker]
+  /// is genuinely listed among this certificate's own designated revokers
+  /// and that the signature verifies against [revoker]'s key, which is what
+  /// this method does. Returns false (not an exception) if no such
+  /// revocation signature from [revoker] is present at all.
+  bool verifyDesignatedRevocation(Certificate revoker) {
+    final out = calloc<Uint8>();
+    try {
+      final code = _bindings.pgp_certificate_verify_designated_revocation(
+          _ptr, revoker._ptr, out);
+      if (code == -4) return false; // NotFound
+      if (code != 0) throw PgpException(code);
+      return out.value == 1;
+    } finally {
+      calloc.free(out);
     }
   }
 

@@ -396,6 +396,109 @@ int main(void) {
   pgp_certificate_free(revocable);
   pgp_certificate_free(revoked_via_standalone);
 
+  struct Certificate *revoker_alice = NULL;
+  rc = pgp_key_generate("revoker-alice@example.org", &revoker_alice);
+  if (rc != 0 || revoker_alice == NULL) {
+    fprintf(stderr, "pgp_key_generate (revoker_alice) failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  struct Certificate *revoker_bob = NULL;
+  rc = pgp_key_generate("revoker-bob@example.org", &revoker_bob);
+  if (rc != 0 || revoker_bob == NULL) {
+    fprintf(stderr, "pgp_key_generate (revoker_bob) failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revoker_alice);
+    return 1;
+  }
+
+  struct Certificate *alice_with_revoker = NULL;
+  rc = pgp_certificate_add_designated_revoker(revoker_alice, revoker_bob,
+                                               &alice_with_revoker);
+  if (rc != 0 || alice_with_revoker == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_add_designated_revoker failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revoker_alice);
+    pgp_certificate_free(revoker_bob);
+    return 1;
+  }
+
+  char *revocation_keys = NULL;
+  rc = pgp_certificate_revocation_keys(alice_with_revoker, &revocation_keys);
+  if (rc != 0 || revocation_keys == NULL || strstr(revocation_keys, "\t0") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_revocation_keys failed: rc=%" PRId32
+            " keys=%s\n",
+            rc, revocation_keys ? revocation_keys : "(null)");
+    free(revocation_keys);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revoker_alice);
+    pgp_certificate_free(revoker_bob);
+    pgp_certificate_free(alice_with_revoker);
+    return 1;
+  }
+  free(revocation_keys);
+
+  char *revoker_armored = NULL;
+  rc = pgp_certificate_generate_revocation_armored_by(
+      revoker_bob, alice_with_revoker, 2, "alice lost her key",
+      &revoker_armored);
+  if (rc != 0 || revoker_armored == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_generate_revocation_armored_by failed: rc=%"
+            PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revoker_alice);
+    pgp_certificate_free(revoker_bob);
+    pgp_certificate_free(alice_with_revoker);
+    return 1;
+  }
+
+  struct Certificate *alice_revoked_by_bob = NULL;
+  rc = pgp_certificate_apply_revocation_armored(
+      alice_with_revoker, revoker_armored, &alice_revoked_by_bob);
+  free(revoker_armored);
+  if (rc != 0 || alice_revoked_by_bob == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_apply_revocation_armored (designated) failed: "
+            "rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revoker_alice);
+    pgp_certificate_free(revoker_bob);
+    pgp_certificate_free(alice_with_revoker);
+    return 1;
+  }
+
+  uint8_t designated_verified = 0;
+  rc = pgp_certificate_verify_designated_revocation(
+      alice_revoked_by_bob, revoker_bob, &designated_verified);
+  if (rc != 0 || designated_verified != 1) {
+    fprintf(stderr,
+            "pgp_certificate_verify_designated_revocation failed: rc=%"
+            PRId32 " verified=%u\n",
+            rc, designated_verified);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(revoker_alice);
+    pgp_certificate_free(revoker_bob);
+    pgp_certificate_free(alice_with_revoker);
+    pgp_certificate_free(alice_revoked_by_bob);
+    return 1;
+  }
+
+  pgp_certificate_free(revoker_alice);
+  pgp_certificate_free(revoker_bob);
+  pgp_certificate_free(alice_with_revoker);
+  pgp_certificate_free(alice_revoked_by_bob);
+
   struct Certificate *rsa_cert = NULL;
   rc = pgp_key_generate_with_cipher_suite(
       "rsa-key@example.org", /* RSA2k */ 5, &rsa_cert);
