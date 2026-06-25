@@ -755,6 +755,45 @@ pub unsafe extern "C" fn pgp_certificate_add_signing_subkey(
     FFIError::Ok as i32
 }
 
+/// Add an authentication subkey, writing the updated cert to `*new_cert`.
+///
+/// # Safety
+/// `cert` and `new_cert` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_add_authentication_subkey(
+    cert: *const Certificate,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if cert.is_null() || new_cert.is_null() {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = (&*wrapper.0).clone();
+
+    let p = &StandardPolicy::new();
+    let vc = match cert.with_policy(p, None) {
+        Ok(vc) => vc,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match KeyBuilder::new(KeyFlags::empty().set_authentication()).subkey(vc) {
+        Ok(b) => match b.attach_cert() {
+            Ok(c) => c,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 /// Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
 ///
 /// `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,
@@ -1267,6 +1306,9 @@ pub unsafe extern "C" fn pgp_certificate_subkeys(
                 }
                 if vka.for_signing() {
                     flags.push("signing");
+                }
+                if vka.for_authentication() {
+                    flags.push("authentication");
                 }
                 revoked = matches!(vka.revocation_status(), RevocationStatus::Revoked(_));
                 expiry_epoch = vka
@@ -3429,6 +3471,64 @@ mod tests {
 
             pgp_certificate_free(cert);
             pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn subkeys_reports_authentication_subkey_after_add() {
+        unsafe {
+            let cert = generate_cert("add-auth-subkey@example.org");
+
+            let mut updated: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_add_authentication_subkey(cert, &mut updated),
+                FFIError::Ok as i32
+            );
+
+            let mut listing: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_subkeys(updated, &mut listing),
+                FFIError::Ok as i32
+            );
+            let listing_str = to_owned_c_string(listing);
+
+            // Base cert already has a signing and an encryption subkey; this
+            // adds an authentication subkey, for three subkeys total.
+            let lines: Vec<&str> = listing_str.lines().collect();
+            assert_eq!(lines.len(), 3);
+            let flags: Vec<&str> = lines
+                .iter()
+                .map(|l| l.split('\t').nth(2).unwrap())
+                .collect();
+            assert_eq!(flags.iter().filter(|f| **f == "authentication").count(), 1);
+            assert_eq!(flags.iter().filter(|f| **f == "signing").count(), 1);
+            assert_eq!(flags.iter().filter(|f| **f == "encryption").count(), 1);
+            for line in &lines {
+                let fields: Vec<&str> = line.split('\t').collect();
+                assert_eq!(fields[3], "0");
+            }
+
+            pgp_certificate_free(cert);
+            pgp_certificate_free(updated);
+        }
+    }
+
+    #[test]
+    fn add_authentication_subkey_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("add-auth-subkey-null@example.org");
+            let mut updated: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_add_authentication_subkey(ptr::null(), &mut updated),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_add_authentication_subkey(cert, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(cert);
         }
     }
 

@@ -147,6 +147,15 @@ int32_t pgp_certificate_add_signing_subkey(const struct Certificate *cert,
                                            struct Certificate **new_cert);
 
 /**
+ * Add an authentication subkey, writing the updated cert to `*new_cert`.
+ *
+ * # Safety
+ * `cert` and `new_cert` must be non-null.
+ */
+int32_t pgp_certificate_add_authentication_subkey(const struct Certificate *cert,
+                                                  struct Certificate **new_cert);
+
+/**
  * Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
  *
  * `reason` is an RFC 4880 reason-for-revocation code (0 = unspecified,

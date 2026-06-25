@@ -59,6 +59,37 @@ int main(void) {
   cert = updated;
 
   updated = NULL;
+  rc = pgp_certificate_add_authentication_subkey(cert, &updated);
+  if (rc != 0 || updated == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_add_authentication_subkey failed: rc=%" PRId32
+            "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  pgp_certificate_free(cert);
+  cert = updated;
+
+  char *subkeys = NULL;
+  rc = pgp_certificate_subkeys(cert, &subkeys);
+  if (rc != 0 || subkeys == NULL) {
+    fprintf(stderr, "pgp_certificate_subkeys failed: rc=%" PRId32 "\n", rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  if (strstr(subkeys, "authentication") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_subkeys did not report an authentication "
+            "subkey: %s\n",
+            subkeys);
+    free(subkeys);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  free(subkeys);
+
+  updated = NULL;
   rc = pgp_certificate_revoke_userid(cert, "other@example.org", 32,
                                       "address decommissioned", &updated);
   if (rc != 0 || updated == NULL) {
