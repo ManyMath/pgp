@@ -2404,6 +2404,42 @@ class PgpFfiBindings {
           int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Char>)>();
 
+  /// Encrypt the file at `input_path` to all `count` recipient certificates,
+  /// streaming the result to `output_path`. Any recipient whose private key is
+  /// available can decrypt. The file-based counterpart of
+  /// `pgp_encrypt_string_to_recipients`; see the "File-based streaming
+  /// operations" section comment for why this exists alongside
+  /// `pgp_certificate_encrypt_file` (which only supports a single recipient).
+  ///
+  /// # Safety
+  /// `recipient_certs`, `input_path`, and `output_path` must be non-null; each
+  /// element of `recipient_certs` must be a valid Certificate pointer.
+  int pgp_encrypt_to_recipients_file(
+    ffi.Pointer<ffi.Pointer<Certificate>> recipient_certs,
+    int count,
+    ffi.Pointer<ffi.Char> input_path,
+    ffi.Pointer<ffi.Char> output_path,
+  ) {
+    return _pgp_encrypt_to_recipients_file(
+      recipient_certs,
+      count,
+      input_path,
+      output_path,
+    );
+  }
+
+  late final _pgp_encrypt_to_recipients_filePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+              ffi.UintPtr,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>)>>('pgp_encrypt_to_recipients_file');
+  late final _pgp_encrypt_to_recipients_file =
+      _pgp_encrypt_to_recipients_filePtr.asFunction<
+          int Function(ffi.Pointer<ffi.Pointer<Certificate>>, int,
+              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>();
+
   /// Encrypt the file at `input_path` to all `count` recipient certificates and
   /// sign it with `signer_cert`, streaming the result to `output_path`. The
   /// file-based counterpart of `pgp_encrypt_and_sign_string`; see the

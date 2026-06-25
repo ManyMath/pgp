@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Added `PGP.encryptToRecipientsFile(recipients, inputPath, outputPath)`, the
+  multi-recipient counterpart to `Certificate.encryptFile` (which only
+  supported a single recipient): the one file-based entry point missing from
+  the previous release's streaming feature, since `encryptToRecipients`/
+  `encryptBytesToRecipients` already supported an arbitrary recipient list in
+  memory. Any recipient can decrypt the result with the existing
+  `Certificate.decryptFile`.
+
 - Added file-based streaming encrypt/decrypt/sign/verify:
   `Certificate.encryptFile(inputPath, outputPath)`,
   `Certificate.decryptFile(inputPath, outputPath)`,

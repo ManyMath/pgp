@@ -1257,6 +1257,44 @@ void main() {
       );
       alice.dispose();
     });
+
+    test('encryptToRecipientsFile round-trips for every recipient', () {
+      final alice = pgp.generateKey('file-multi-alice@example.org');
+      final bob = pgp.generateKey('file-multi-bob@example.org');
+
+      final inputFile = File('${tmp.path}/multi-plain.txt')
+        ..writeAsStringSync('streamed to two recipients');
+      final encryptedFile = File('${tmp.path}/multi-cipher.asc');
+      final aliceOut = File('${tmp.path}/multi-alice.out');
+      final bobOut = File('${tmp.path}/multi-bob.out');
+
+      PGP.encryptToRecipientsFile(
+        [alice, bob],
+        inputFile.path,
+        encryptedFile.path,
+      );
+      expect(encryptedFile.existsSync(), isTrue);
+
+      alice.decryptFile(encryptedFile.path, aliceOut.path);
+      expect(aliceOut.readAsStringSync(), 'streamed to two recipients');
+
+      bob.decryptFile(encryptedFile.path, bobOut.path);
+      expect(bobOut.readAsStringSync(), 'streamed to two recipients');
+
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('encryptToRecipientsFile throws for empty recipient list', () {
+      expect(
+        () => PGP.encryptToRecipientsFile(
+          [],
+          '${tmp.path}/in.txt',
+          '${tmp.path}/out.asc',
+        ),
+        throwsA(isA<PgpException>()),
+      );
+    });
   });
 
   group('binary data (bytes API)', () {

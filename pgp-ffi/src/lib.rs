@@ -4923,6 +4923,111 @@ pub unsafe extern "C" fn pgp_certificate_decrypt_file(
     FFIError::Ok as i32
 }
 
+/// Encrypt the file at `input_path` to all `count` recipient certificates,
+/// streaming the result to `output_path`. Any recipient whose private key is
+/// available can decrypt. The file-based counterpart of
+/// `pgp_encrypt_string_to_recipients`; see the "File-based streaming
+/// operations" section comment for why this exists alongside
+/// `pgp_certificate_encrypt_file` (which only supports a single recipient).
+///
+/// # Safety
+/// `recipient_certs`, `input_path`, and `output_path` must be non-null; each
+/// element of `recipient_certs` must be a valid Certificate pointer.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_encrypt_to_recipients_file(
+    recipient_certs: *const *const Certificate,
+    count: usize,
+    input_path: *const libc::c_char,
+    output_path: *const libc::c_char,
+) -> i32 {
+    if recipient_certs.is_null() || input_path.is_null() || output_path.is_null() {
+        return FFIError::Null as i32;
+    }
+    if count == 0 {
+        return FFIError::NotFound as i32;
+    }
+
+    let input_path = match path_str(input_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let output_path = match path_str(output_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let mut input = match File::open(input_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::NotFound as i32,
+    };
+    let output = match File::create(output_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let policy = &StandardPolicy::new();
+
+    let mut cert_vec: Vec<SequoiaCert> = Vec::with_capacity(count);
+    for i in 0..count {
+        let outer_ptr = *recipient_certs.add(i);
+        if outer_ptr.is_null() {
+            return FFIError::Null as i32;
+        }
+        let wrapper = &*outer_ptr;
+        if wrapper.0.is_null() {
+            return FFIError::Invalid as i32;
+        }
+        cert_vec.push((&*wrapper.0).clone());
+    }
+
+    let mut recipients: Vec<_> = Vec::new();
+    for cert in cert_vec.iter() {
+        for ka in cert
+            .keys()
+            .with_policy(policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+        {
+            recipients.push(ka);
+        }
+    }
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let message = Message::new(BufWriter::new(output));
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let message = match Encryptor::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+
+    if std::io::copy(&mut input, &mut message).is_err() || message.finalize().is_err() {
+        remove_partial_output(output_path);
+        return FFIError::Failed as i32;
+    }
+
+    FFIError::Ok as i32
+}
+
 /// Encrypt the file at `input_path` to all `count` recipient certificates and
 /// sign it with `signer_cert`, streaming the result to `output_path`. The
 /// file-based counterpart of `pgp_encrypt_and_sign_string`; see the
@@ -8989,6 +9094,76 @@ mod tests {
                 ),
                 FFIError::Null as i32
             );
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn encrypt_to_recipients_file_round_trip_both_recipients_decrypt() {
+        unsafe {
+            let alice = generate_cert("recipients-file-alice@example.org");
+            let bob = generate_cert("recipients-file-bob@example.org");
+            let input_path = unique_temp_path("multi-plain.txt");
+            let encrypted_path = unique_temp_path("multi-cipher.asc");
+            let alice_out = unique_temp_path("multi-alice.out");
+            let bob_out = unique_temp_path("multi-bob.out");
+            std::fs::write(&input_path, b"streamed to two recipients").unwrap();
+
+            let certs = [alice as *const Certificate, bob as *const Certificate];
+            let c_input = CString::new(input_path.to_str().unwrap()).unwrap();
+            let c_encrypted = CString::new(encrypted_path.to_str().unwrap()).unwrap();
+            let rc = pgp_encrypt_to_recipients_file(
+                certs.as_ptr(),
+                certs.len(),
+                c_input.as_ptr(),
+                c_encrypted.as_ptr(),
+            );
+            assert_eq!(rc, FFIError::Ok as i32);
+            assert!(encrypted_path.exists());
+
+            let c_alice_out = CString::new(alice_out.to_str().unwrap()).unwrap();
+            let rc = pgp_certificate_decrypt_file(alice, c_encrypted.as_ptr(), c_alice_out.as_ptr());
+            assert_eq!(rc, FFIError::Ok as i32);
+            assert_eq!(std::fs::read(&alice_out).unwrap(), b"streamed to two recipients");
+
+            let c_bob_out = CString::new(bob_out.to_str().unwrap()).unwrap();
+            let rc = pgp_certificate_decrypt_file(bob, c_encrypted.as_ptr(), c_bob_out.as_ptr());
+            assert_eq!(rc, FFIError::Ok as i32);
+            assert_eq!(std::fs::read(&bob_out).unwrap(), b"streamed to two recipients");
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            let _ = std::fs::remove_file(&input_path);
+            let _ = std::fs::remove_file(&encrypted_path);
+            let _ = std::fs::remove_file(&alice_out);
+            let _ = std::fs::remove_file(&bob_out);
+        }
+    }
+
+    #[test]
+    fn encrypt_to_recipients_file_rejects_zero_count_and_null_args() {
+        unsafe {
+            let cert = generate_cert("recipients-file-null@example.org");
+            let certs = [cert as *const Certificate];
+            let path = CString::new("/tmp/whatever").unwrap();
+
+            assert_eq!(
+                pgp_encrypt_to_recipients_file(certs.as_ptr(), 0, path.as_ptr(), path.as_ptr()),
+                FFIError::NotFound as i32
+            );
+            assert_eq!(
+                pgp_encrypt_to_recipients_file(ptr::null(), 1, path.as_ptr(), path.as_ptr()),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_encrypt_to_recipients_file(certs.as_ptr(), 1, ptr::null(), path.as_ptr()),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_encrypt_to_recipients_file(certs.as_ptr(), 1, path.as_ptr(), ptr::null()),
+                FFIError::Null as i32
+            );
+
             pgp_certificate_free(cert);
         }
     }

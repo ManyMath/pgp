@@ -920,6 +920,79 @@ int main(void) {
   remove(plain_path);
   remove(cipher_path);
   remove(out_path);
+
+  const char *multi_cipher_path = "/tmp/pgp_ffi_test_multi_cipher.asc";
+  const char *multi_out_path = "/tmp/pgp_ffi_test_multi_out.txt";
+
+  FILE *multi_plain_fp = fopen(plain_path, "wb");
+  if (multi_plain_fp == NULL) {
+    fprintf(stderr, "failed to create %s\n", plain_path);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+  fwrite(file_payload, 1, strlen(file_payload), multi_plain_fp);
+  fclose(multi_plain_fp);
+
+  struct Certificate *multi_recipients[2] = {file_alice, file_bob};
+  rc = pgp_encrypt_to_recipients_file(
+      (const struct Certificate **)multi_recipients, 2, plain_path,
+      multi_cipher_path);
+  if (rc != 0) {
+    fprintf(stderr, "pgp_encrypt_to_recipients_file failed: rc=%" PRId32 "\n",
+            rc);
+    remove(plain_path);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+
+  rc = pgp_certificate_decrypt_file(file_bob, multi_cipher_path,
+                                     multi_out_path);
+  if (rc != 0) {
+    fprintf(stderr,
+            "pgp_certificate_decrypt_file (multi-recipient) failed: rc=%" PRId32
+            "\n",
+            rc);
+    remove(plain_path);
+    remove(multi_cipher_path);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+
+  FILE *multi_out_fp = fopen(multi_out_path, "rb");
+  if (multi_out_fp == NULL) {
+    fprintf(stderr, "failed to open %s\n", multi_out_path);
+    remove(plain_path);
+    remove(multi_cipher_path);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+  char multi_out_buf[128] = {0};
+  size_t multi_out_len =
+      fread(multi_out_buf, 1, sizeof(multi_out_buf) - 1, multi_out_fp);
+  fclose(multi_out_fp);
+  if (multi_out_len != strlen(file_payload) ||
+      strncmp(multi_out_buf, file_payload, multi_out_len) != 0) {
+    fprintf(stderr, "multi-recipient file round trip mismatch: got \"%s\"\n",
+            multi_out_buf);
+    remove(plain_path);
+    remove(multi_cipher_path);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+
+  remove(plain_path);
+  remove(multi_cipher_path);
+  remove(multi_out_path);
   pgp_certificate_free(file_alice);
   pgp_certificate_free(file_bob);
 

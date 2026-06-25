@@ -1796,6 +1796,38 @@ class PGP {
     }
   }
 
+  /// Encrypts the file at [inputPath] to all [recipients], streaming the
+  /// ASCII-armored result to [outputPath]. The file-based counterpart of
+  /// [encryptToRecipients]; see [Certificate.encryptFile] for why this exists
+  /// alongside it (which only supports a single recipient).
+  static void encryptToRecipientsFile(
+    List<Certificate> recipients,
+    String inputPath,
+    String outputPath,
+  ) {
+    if (recipients.isEmpty) throw PgpException(-4); // FFIError::NotFound
+
+    final certsArray = calloc<Pointer<ffi.Certificate>>(recipients.length);
+    for (var i = 0; i < recipients.length; i++) {
+      certsArray[i] = recipients[i].pointer;
+    }
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    try {
+      final code = _bindings.pgp_encrypt_to_recipients_file(
+        certsArray.cast(),
+        recipients.length,
+        inPtr.cast(),
+        outPtr.cast(),
+      );
+      if (code != 0) throw PgpException(code);
+    } finally {
+      calloc.free(certsArray);
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+    }
+  }
+
   /// Encrypts raw [data] bytes to all [recipients], returning an
   /// ASCII-armored message any recipient can [Certificate.decryptBytes].
   static String encryptBytesToRecipients(

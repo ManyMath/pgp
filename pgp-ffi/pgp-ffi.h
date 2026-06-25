@@ -1133,6 +1133,23 @@ int32_t pgp_certificate_decrypt_file(const struct Certificate *cert,
                                      const char *output_path);
 
 /**
+ * Encrypt the file at `input_path` to all `count` recipient certificates,
+ * streaming the result to `output_path`. Any recipient whose private key is
+ * available can decrypt. The file-based counterpart of
+ * `pgp_encrypt_string_to_recipients`; see the "File-based streaming
+ * operations" section comment for why this exists alongside
+ * `pgp_certificate_encrypt_file` (which only supports a single recipient).
+ *
+ * # Safety
+ * `recipient_certs`, `input_path`, and `output_path` must be non-null; each
+ * element of `recipient_certs` must be a valid Certificate pointer.
+ */
+int32_t pgp_encrypt_to_recipients_file(const struct Certificate *const *recipient_certs,
+                                       uintptr_t count,
+                                       const char *input_path,
+                                       const char *output_path);
+
+/**
  * Encrypt the file at `input_path` to all `count` recipient certificates and
  * sign it with `signer_cert`, streaming the result to `output_path`. The
  * file-based counterpart of `pgp_encrypt_and_sign_string`; see the
