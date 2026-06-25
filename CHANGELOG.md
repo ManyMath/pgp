@@ -1,3 +1,13 @@
+## Unreleased
+
+- `Certificate.verifyUserIdCertification` (and the underlying
+  `pgp_certificate_verify_userid_certification`) now also matches
+  certifications that carry only a legacy bare-key-ID `Issuer` subpacket and
+  no modern `IssuerFingerprint` subpacket: previously such a certification
+  (never produced by this library's own `certifyUserId`, but possible from
+  other, older OpenPGP implementations) would report `NotFound` even if it
+  was genuinely issued by the given issuer.
+
 ## 0.0.1-dev.8
 
 - Add `PGP.messageRecipientKeyIds(armoredMessage)`, listing the recipient
