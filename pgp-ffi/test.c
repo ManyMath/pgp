@@ -22,6 +22,28 @@ int main(void) {
   pgp_certificate_free(cert);
   cert = updated;
 
+  struct Certificate *alice = NULL;
+  rc = pgp_key_generate("alice@example.org", &alice);
+  if (rc != 0 || alice == NULL) {
+    fprintf(stderr, "pgp_key_generate (alice) failed: rc=%" PRId32 "\n", rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  updated = NULL;
+  rc = pgp_certificate_certify_userid(alice, cert, "other@example.org",
+                                       &updated);
+  if (rc != 0 || updated == NULL) {
+    fprintf(stderr, "pgp_certificate_certify_userid failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+  pgp_certificate_free(cert);
+  pgp_certificate_free(alice);
+  cert = updated;
+
   updated = NULL;
   rc = pgp_certificate_add_transport_encryption_subkey(cert, &updated);
   if (rc != 0 || updated == NULL) {

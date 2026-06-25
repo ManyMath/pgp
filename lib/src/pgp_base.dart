@@ -343,6 +343,23 @@ class Certificate {
     }
   }
 
+  /// Certifies [userId] on [target] using this certificate's key, returning
+  /// an updated copy of [target] carrying this certificate's certification
+  /// signature on that user ID: the basis of "vouching for" or "signing"
+  /// someone else's key. [target] itself is left unmodified.
+  ///
+  /// Throws [PgpException] if [userId] isn't present on [target] or if this
+  /// certificate's certification-capable secret key isn't available.
+  Certificate certifyUserId(Certificate target, String userId) {
+    final userIdPointer = userId.toNativeUtf8();
+    try {
+      return _derive((out) => _bindings.pgp_certificate_certify_userid(
+          _ptr, target._ptr, userIdPointer.cast(), out));
+    } finally {
+      calloc.free(userIdPointer);
+    }
+  }
+
   /// Returns the primary key fingerprint as a 40-character uppercase hex string.
   String fingerprint() {
     final out = calloc<Pointer<Char>>();

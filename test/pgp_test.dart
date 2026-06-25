@@ -235,6 +235,38 @@ void main() {
     cert.dispose();
   });
 
+  group('third-party certification', () {
+    test('certifyUserId attaches a signature from another certificate', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      final certified = alice.certifyUserId(bob, 'bob@example.org');
+      expect(certified.pointer.address, isNonZero);
+      certified.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('certifyUserId leaves the target certificate unmodified', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      alice.certifyUserId(bob, 'bob@example.org').dispose();
+      expect(bob.pointer.address, isNonZero);
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('certifyUserId throws for a user ID not on the target', () {
+      final alice = pgp.generateKey('alice@example.org');
+      final bob = pgp.generateKey('bob@example.org');
+      expect(
+        () => alice.certifyUserId(bob, 'nobody@example.org'),
+        throwsA(isA<PgpException>().having((e) => e.code, 'code', -4)),
+      );
+      alice.dispose();
+      bob.dispose();
+    });
+  });
+
   group('key expiration', () {
     test('generateKeyWithExpiry returns a valid certificate handle', () {
       final cert = pgp.generateKeyWithExpiry(
