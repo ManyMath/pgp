@@ -1701,6 +1701,9 @@ pub unsafe extern "C" fn pgp_certificate_set_primary_userid(
         .max();
     if let Some(newest) = newest {
         let target = newest + Duration::from_secs(1);
+        // Cap the wait so a skewed clock (signature far in the future)
+        // cannot hang the call; in that abnormal case we simply proceed,
+        // same tradeoff as `pgp_certificate_set_expiry`/`_set_subkey_expiry`.
         loop {
             match target.duration_since(SystemTime::now()) {
                 Ok(remaining) if remaining <= Duration::from_secs(2) => {
@@ -1812,7 +1815,16 @@ pub unsafe extern "C" fn pgp_certificate_userid_certifications(
 /// fingerprints without checking the signature itself). Writes `1`/`0` to
 /// `*out_verified`. Returns NotFound if `user_id` isn't present on
 /// `target_cert`, or if no certification issued by `issuer_cert`'s
-/// fingerprint is attached to it.
+/// fingerprint is attached to it. Matching is by the certification
+/// signature's `IssuerFingerprint` subpacket; a certification carrying only
+/// a legacy `Issuer` (bare key ID) subpacket and no fingerprint subpacket
+/// will not be found even if it was genuinely issued by `issuer_cert`:
+/// every certification produced by `pgp_certificate_certify_userid` always
+/// carries the fingerprint subpacket, so this only affects certifications
+/// imported from other, older implementations. If `issuer_cert` has
+/// certified `user_id` more than once, the first matching certification
+/// (Sequoia's own ordering) is the one verified, matching
+/// `pgp_certificate_userid_certifications`' listing order.
 ///
 /// # Safety
 /// `target_cert`, `issuer_cert`, `user_id`, and `out_verified` must be
@@ -4271,6 +4283,64 @@ mod tests {
             let recipients = to_owned_c_string(out);
             assert_eq!(recipients.lines().count(), 1);
             assert_eq!(recipients.lines().next().unwrap(), expected_key_id);
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn message_recipient_key_ids_reports_hidden_for_wildcard_recipient() {
+        unsafe {
+            let cert = generate_cert("hidden-recipient@example.org");
+            let sequoia_cert = &*(&*cert).0;
+            let policy = StandardPolicy::new();
+            let recipient_key = sequoia_cert
+                .keys()
+                .with_policy(&policy, None)
+                .supported()
+                .alive()
+                .revoked(false)
+                .for_transport_encryption()
+                .next()
+                .unwrap()
+                .key()
+                .clone();
+
+            let algo = SymmetricAlgorithm::AES256;
+            let session_key = SessionKey::new(32);
+            let mut pkesk = sequoia_openpgp::packet::PKESK::V3(
+                sequoia_openpgp::packet::pkesk::PKESK3::for_recipient(
+                    algo,
+                    &session_key,
+                    &recipient_key,
+                )
+                .unwrap(),
+            );
+            if let sequoia_openpgp::packet::PKESK::V3(ref mut pkesk3) = pkesk {
+                pkesk3.set_recipient(sequoia_openpgp::KeyID::wildcard());
+            }
+
+            let mut bytes = Vec::new();
+            sequoia_openpgp::Packet::from(pkesk)
+                .serialize(&mut bytes)
+                .unwrap();
+
+            let mut out = Vec::new();
+            {
+                let message = Message::new(&mut out);
+                let mut armorer =
+                    Armorer::new(message).kind(armor::Kind::Message).build().unwrap();
+                armorer.write_all(&bytes).unwrap();
+                armorer.finalize().unwrap();
+            }
+            let armored = CString::new(String::from_utf8(out).unwrap()).unwrap();
+
+            let mut recipients: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_message_recipient_key_ids(armored.as_ptr(), &mut recipients),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(recipients), "hidden");
 
             pgp_certificate_free(cert);
         }
