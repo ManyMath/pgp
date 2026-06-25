@@ -985,6 +985,94 @@ pub unsafe extern "C" fn pgp_certificate_certify_userid(
     FFIError::Ok as i32
 }
 
+/// Have `signing_cert` revoke its own earlier third-party certification of
+/// `user_id` on `target_cert` (the counterpart to
+/// `pgp_certificate_certify_userid`), writing the updated copy of
+/// `target_cert`: now carrying `signing_cert`'s certification-revocation
+/// signature on that user ID: to `*new_cert`. `target_cert` itself is left
+/// unmodified; `signing_cert`'s certification-capable secret key material
+/// must be present and unencrypted. `reason` is an RFC 4880
+/// reason-for-revocation code; `message` is an optional human-readable
+/// explanation (pass null for none). Returns NotFound if `user_id` is not
+/// present on `target_cert`.
+/// Caller must free `*new_cert` with `pgp_certificate_free`.
+///
+/// # Safety
+/// `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be
+/// non-null. `message`, if non-null, must be a valid NUL-terminated C
+/// string.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_revoke_userid_certification(
+    signing_cert: *const Certificate,
+    target_cert: *const Certificate,
+    user_id: *const libc::c_char,
+    reason: u8,
+    message: *const libc::c_char,
+    new_cert: *mut *mut Certificate,
+) -> i32 {
+    if signing_cert.is_null()
+        || target_cert.is_null()
+        || user_id.is_null()
+        || new_cert.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *new_cert = ptr::null_mut();
+
+    let signing_wrapper = &*signing_cert;
+    let target_wrapper = &*target_cert;
+    if signing_wrapper.0.is_null() || target_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let signing_cert = &*signing_wrapper.0;
+    let target_cert = (&*target_wrapper.0).clone();
+
+    let user_id_str = match CStr::from_ptr(user_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let message_bytes = match revocation_message_bytes(message) {
+        Ok(b) => b,
+        Err(code) => return code,
+    };
+
+    let target_uid = match target_cert
+        .userids()
+        .find(|ua| ua.userid().value() == user_id_str.as_bytes())
+    {
+        Some(ua) => ua.userid().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+
+    let mut signer = match signing_cert.primary_key().key().clone().parts_into_secret() {
+        Ok(k) => match k.into_keypair() {
+            Ok(kp) => kp,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    let sig = match UserIDRevocationBuilder::new()
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes)
+    {
+        Ok(b) => match b.build(&mut signer, &target_cert, &target_uid, None) {
+            Ok(sig) => sig,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let updated = match target_cert.insert_packets(sig) {
+        Ok(c) => c,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let inner = Box::into_raw(Box::new(updated));
+    *new_cert = Box::into_raw(Box::new(Certificate(inner)));
+    FFIError::Ok as i32
+}
+
 /// Encrypt `plaintext` to all `count` recipient certificates and write a single
 /// ASCII-armored message to `*armored_message`. Any recipient whose private key
 /// is available can decrypt. Returns NotFound if `count` is zero or no cert
@@ -3939,6 +4027,201 @@ mod tests {
                     alice,
                     bob,
                     user_id.as_ptr(),
+                    ptr::null_mut()
+                ),
+                FFIError::Null as i32
+            );
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn revoke_userid_certification_attaches_revocation_signature() {
+        unsafe {
+            let alice = generate_cert("alice-revoker@example.org");
+            let bob = generate_cert("bob-revokee@example.org");
+            let user_id = CString::new("bob-revokee@example.org").unwrap();
+
+            let mut certified: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), &mut certified),
+                FFIError::Ok as i32
+            );
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    alice,
+                    certified,
+                    user_id.as_ptr(),
+                    2,
+                    ptr::null(),
+                    &mut revoked
+                ),
+                FFIError::Ok as i32
+            );
+            assert!(!revoked.is_null());
+
+            let mut alice_fp: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_fingerprint(alice, &mut alice_fp),
+                FFIError::Ok as i32
+            );
+            let alice_fp_owned = CStr::from_ptr(alice_fp).to_str().unwrap().to_owned();
+            libc::free(alice_fp as *mut libc::c_void);
+            let alice_fp = alice_fp_owned;
+
+            let sequoia_cert = &*(&*revoked).0;
+            let ua = sequoia_cert
+                .userids()
+                .find(|ua| ua.userid().value() == b"bob-revokee@example.org")
+                .unwrap();
+            // Third-party certifications and third-party
+            // certification-revocations live in separate buckets
+            // (`certifications` vs. `other_revocations`), so check each.
+            let certification_from_alice = ua
+                .certifications()
+                .find(|sig| sig.issuer_fingerprints().any(|fp| fp.to_hex() == alice_fp))
+                .expect("original third-party certification from alice not found");
+            assert_eq!(
+                certification_from_alice.typ(),
+                sequoia_openpgp::types::SignatureType::GenericCertification
+            );
+
+            let revocation = ua
+                .other_revocations2()
+                .find(|sig| sig.issuer_fingerprints().any(|fp| fp.to_hex() == alice_fp))
+                .expect("certification-revocation signature from alice not found");
+            assert_eq!(
+                revocation.typ(),
+                sequoia_openpgp::types::SignatureType::CertificationRevocation
+            );
+            let (code, _) = revocation.reason_for_revocation().unwrap();
+            assert_eq!(code, ReasonForRevocation::KeyCompromised);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(certified);
+            pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn revoke_userid_certification_leaves_target_cert_unmodified() {
+        unsafe {
+            let alice = generate_cert("alice-revoker-untouched@example.org");
+            let bob = generate_cert("bob-revokee-untouched@example.org");
+            let user_id = CString::new("bob-revokee-untouched@example.org").unwrap();
+
+            let mut certified: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), &mut certified),
+                FFIError::Ok as i32
+            );
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    alice,
+                    certified,
+                    user_id.as_ptr(),
+                    0,
+                    ptr::null(),
+                    &mut revoked
+                ),
+                FFIError::Ok as i32
+            );
+
+            let original = &*(&*certified).0;
+            let ua = original
+                .userids()
+                .find(|ua| ua.userid().value() == b"bob-revokee-untouched@example.org")
+                .unwrap();
+            assert_eq!(ua.other_revocations2().count(), 0);
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+            pgp_certificate_free(certified);
+            pgp_certificate_free(revoked);
+        }
+    }
+
+    #[test]
+    fn revoke_userid_certification_rejects_missing_user_id() {
+        unsafe {
+            let alice = generate_cert("alice-revoker-missing@example.org");
+            let bob = generate_cert("bob-revokee-missing@example.org");
+            let user_id = CString::new("nobody@example.org").unwrap();
+
+            let mut revoked: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    alice,
+                    bob,
+                    user_id.as_ptr(),
+                    0,
+                    ptr::null(),
+                    &mut revoked
+                ),
+                FFIError::NotFound as i32
+            );
+            assert!(revoked.is_null());
+
+            pgp_certificate_free(alice);
+            pgp_certificate_free(bob);
+        }
+    }
+
+    #[test]
+    fn revoke_userid_certification_rejects_null_args() {
+        unsafe {
+            let alice = generate_cert("alice-revoker-null@example.org");
+            let bob = generate_cert("bob-revokee-null@example.org");
+            let user_id = CString::new("bob-revokee-null@example.org").unwrap();
+            let mut revoked: *mut Certificate = ptr::null_mut();
+
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    ptr::null(),
+                    bob,
+                    user_id.as_ptr(),
+                    0,
+                    ptr::null(),
+                    &mut revoked
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    alice,
+                    ptr::null(),
+                    user_id.as_ptr(),
+                    0,
+                    ptr::null(),
+                    &mut revoked
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    alice,
+                    bob,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    &mut revoked
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_revoke_userid_certification(
+                    alice,
+                    bob,
+                    user_id.as_ptr(),
+                    0,
+                    ptr::null(),
                     ptr::null_mut()
                 ),
                 FFIError::Null as i32

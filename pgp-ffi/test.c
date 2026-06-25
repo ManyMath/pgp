@@ -42,6 +42,22 @@ int main(void) {
     return 1;
   }
   pgp_certificate_free(cert);
+  cert = updated;
+
+  updated = NULL;
+  rc = pgp_certificate_revoke_userid_certification(
+      alice, cert, "other@example.org", 2, "signing key compromised",
+      &updated);
+  if (rc != 0 || updated == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_revoke_userid_certification failed: rc=%" PRId32
+            "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(alice);
+    return 1;
+  }
+  pgp_certificate_free(cert);
   pgp_certificate_free(alice);
   cert = updated;
 

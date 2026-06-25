@@ -202,6 +202,31 @@ int32_t pgp_certificate_certify_userid(const struct Certificate *signing_cert,
                                        struct Certificate **new_cert);
 
 /**
+ * Have `signing_cert` revoke its own earlier third-party certification of
+ * `user_id` on `target_cert` (the counterpart to
+ * `pgp_certificate_certify_userid`), writing the updated copy of
+ * `target_cert`: now carrying `signing_cert`'s certification-revocation
+ * signature on that user ID: to `*new_cert`. `target_cert` itself is left
+ * unmodified; `signing_cert`'s certification-capable secret key material
+ * must be present and unencrypted. `reason` is an RFC 4880
+ * reason-for-revocation code; `message` is an optional human-readable
+ * explanation (pass null for none). Returns NotFound if `user_id` is not
+ * present on `target_cert`.
+ * Caller must free `*new_cert` with `pgp_certificate_free`.
+ *
+ * # Safety
+ * `signing_cert`, `target_cert`, `user_id`, and `new_cert` must be
+ * non-null. `message`, if non-null, must be a valid NUL-terminated C
+ * string.
+ */
+int32_t pgp_certificate_revoke_userid_certification(const struct Certificate *signing_cert,
+                                                    const struct Certificate *target_cert,
+                                                    const char *user_id,
+                                                    uint8_t reason,
+                                                    const char *message,
+                                                    struct Certificate **new_cert);
+
+/**
  * Encrypt `plaintext` to all `count` recipient certificates and write a single
  * ASCII-armored message to `*armored_message`. Any recipient whose private key
  * is available can decrypt. Returns NotFound if `count` is zero or no cert
