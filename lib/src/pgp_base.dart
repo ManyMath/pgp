@@ -74,6 +74,9 @@ class SubkeyInfo {
   /// Whether this subkey is usable for signing.
   final bool canSign;
 
+  /// Whether this subkey is usable for authentication.
+  final bool canAuthenticate;
+
   /// Whether this subkey has been revoked.
   final bool isRevoked;
 
@@ -87,6 +90,7 @@ class SubkeyInfo {
     required this.fingerprint,
     required this.canEncrypt,
     required this.canSign,
+    required this.canAuthenticate,
     required this.isRevoked,
     required this.expiryEpoch,
   });
@@ -318,6 +322,10 @@ class Certificate {
   Certificate addSigningSubkey() =>
       _derive((out) => _bindings.pgp_certificate_add_signing_subkey(_ptr, out));
 
+  /// Adds an authentication subkey, returning the updated certificate.
+  Certificate addAuthenticationSubkey() => _derive((out) =>
+      _bindings.pgp_certificate_add_authentication_subkey(_ptr, out));
+
   /// Revokes the subkey at [index] (counting subkeys only), returning the
   /// updated certificate.
   ///
@@ -465,6 +473,7 @@ class Certificate {
           fingerprint: fields[1],
           canEncrypt: flags.contains('encryption'),
           canSign: flags.contains('signing'),
+          canAuthenticate: flags.contains('authentication'),
           isRevoked: fields[3] == '1',
           expiryEpoch: int.parse(fields[4]),
         );

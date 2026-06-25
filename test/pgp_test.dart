@@ -140,6 +140,15 @@ void main() {
     cert.dispose();
   });
 
+  test('addAuthenticationSubkey returns an updated certificate', () {
+    final cert = pgp.generateKey('someone@example.org');
+    final updated = cert.addAuthenticationSubkey();
+    expect(updated.pointer.address, isNonZero);
+    expect(updated.subkeys().where((s) => s.canAuthenticate), hasLength(1));
+    updated.dispose();
+    cert.dispose();
+  });
+
   test('revokeSubkey revokes the generated subkey', () {
     final cert = pgp.generateKey('someone@example.org');
     final updated = cert.revokeSubkey(0);
@@ -172,6 +181,7 @@ void main() {
       expect(subkeys.every((s) => !s.isRevoked), isTrue);
       expect(subkeys.where((s) => s.canEncrypt), hasLength(1));
       expect(subkeys.where((s) => s.canSign), hasLength(1));
+      expect(subkeys.where((s) => s.canAuthenticate), isEmpty);
 
       cert.dispose();
     });
