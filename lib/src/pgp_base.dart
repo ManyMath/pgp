@@ -100,6 +100,39 @@ class SubkeyInfo {
       : null;
 }
 
+/// A user ID listed by [Certificate.userIdsInfo].
+class UserIdInfo {
+  /// The user ID's raw text (e.g. `"Alice <alice@example.org>"`).
+  final String userId;
+
+  /// Whether this user ID has been revoked.
+  final bool isRevoked;
+
+  /// Whether this is the certificate's primary user ID.
+  final bool isPrimary;
+
+  /// Expiration of this user ID's binding signature: i.e. how long the
+  /// certification itself is valid for: as seconds since the Unix epoch;
+  /// 0 means it doesn't expire.
+  final int expiryEpoch;
+
+  const UserIdInfo({
+    required this.userId,
+    required this.isRevoked,
+    required this.isPrimary,
+    required this.expiryEpoch,
+  });
+
+  /// Whether this user ID's binding signature has an expiry set.
+  bool get hasExpiry => expiryEpoch != 0;
+
+  /// This user ID's binding-signature expiry as a UTC [DateTime], or null if
+  /// it has no expiry.
+  DateTime? get expiryDate => hasExpiry
+      ? DateTime.fromMillisecondsSinceEpoch(expiryEpoch * 1000, isUtc: true)
+      : null;
+}
+
 /// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify],
 /// [Certificate.verifyWithSigner], and [Certificate.verifyCleartextWithSigner].
 class SignedPlaintext {
@@ -383,6 +416,31 @@ class Certificate {
       final raw = out.value.cast<Utf8>().toDartString();
       calloc.free(out.value);
       return raw.isEmpty ? [] : raw.split('\n');
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Returns metadata (revocation status, primary flag, binding-signature
+  /// expiry) for every user ID on this certificate, including revoked ones:
+  /// same coverage as [userIds], with detail added.
+  List<UserIdInfo> userIdsInfo() {
+    final out = calloc<Pointer<Char>>();
+    try {
+      final code = _bindings.pgp_certificate_userids_info(_ptr, out);
+      if (code != 0) throw PgpException(code);
+      final raw = out.value.cast<Utf8>().toDartString();
+      calloc.free(out.value);
+      if (raw.isEmpty) return [];
+      return raw.split('\n').map((line) {
+        final fields = line.split('\t');
+        return UserIdInfo(
+          userId: fields[0],
+          isRevoked: fields[1] == '1',
+          isPrimary: fields[2] == '1',
+          expiryEpoch: int.parse(fields[3]),
+        );
+      }).toList();
     } finally {
       calloc.free(out);
     }

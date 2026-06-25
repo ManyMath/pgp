@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int main(void) {
   struct Certificate *cert = NULL;
@@ -68,6 +69,25 @@ int main(void) {
   }
   pgp_certificate_free(cert);
   cert = updated;
+
+  char *userids_info = NULL;
+  rc = pgp_certificate_userids_info(cert, &userids_info);
+  if (rc != 0 || userids_info == NULL) {
+    fprintf(stderr, "pgp_certificate_userids_info failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  if (strstr(userids_info, "other@example.org\t1\t") == NULL) {
+    fprintf(stderr,
+            "pgp_certificate_userids_info did not report other@example.org "
+            "as revoked: %s\n",
+            userids_info);
+    free(userids_info);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  free(userids_info);
 
   updated = NULL;
   rc = pgp_certificate_revoke_subkey(cert, 1, 3, "no longer used", &updated);

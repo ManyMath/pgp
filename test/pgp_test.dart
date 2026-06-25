@@ -267,6 +267,54 @@ void main() {
     });
   });
 
+  group('user ID inspection', () {
+    test('userIdsInfo reports the generated user ID as primary and unrevoked',
+        () {
+      final cert = pgp.generateKey('someone@example.org');
+      final infos = cert.userIdsInfo();
+
+      expect(infos, hasLength(1));
+      expect(infos.single.userId, 'someone@example.org');
+      expect(infos.single.isPrimary, isTrue);
+      expect(infos.single.isRevoked, isFalse);
+      expect(infos.single.hasExpiry, isFalse);
+
+      cert.dispose();
+    });
+
+    test('userIdsInfo reports an added user ID as non-primary', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final updated = cert.addUserId('other@example.org');
+      final infos = updated.userIdsInfo();
+
+      expect(infos, hasLength(2));
+      final primary = infos.firstWhere((i) => i.userId == 'someone@example.org');
+      final secondary = infos.firstWhere((i) => i.userId == 'other@example.org');
+      expect(primary.isPrimary, isTrue);
+      expect(secondary.isPrimary, isFalse);
+
+      updated.dispose();
+      cert.dispose();
+    });
+
+    test('userIdsInfo agrees with revokeUserId', () {
+      final cert = pgp.generateKey('someone@example.org');
+      final withUser = cert.addUserId('other@example.org');
+      final revoked = withUser.revokeUserId('other@example.org');
+
+      final infos = revoked.userIdsInfo();
+      final revokedInfo = infos.firstWhere((i) => i.userId == 'other@example.org');
+      expect(revokedInfo.isRevoked, isTrue);
+      final primaryInfo =
+          infos.firstWhere((i) => i.userId == 'someone@example.org');
+      expect(primaryInfo.isRevoked, isFalse);
+
+      revoked.dispose();
+      withUser.dispose();
+      cert.dispose();
+    });
+  });
+
   group('key expiration', () {
     test('generateKeyWithExpiry returns a valid certificate handle', () {
       final cert = pgp.generateKeyWithExpiry(
