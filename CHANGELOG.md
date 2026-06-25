@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Add `Certificate.merge(other)`, importing updates from `other`: new
+  signatures, certifications, subkeys, and revocations: into a combined
+  certificate. `other` must share this certificate's primary-key fingerprint
+  (an unrelated cert throws `PgpException(-3)`); `other`'s secret key
+  material, if any, is always discarded, so only this certificate's own
+  secret key survives into the result. Neither input is modified. This is
+  the primitive for refreshing a locally-known certificate with data from a
+  keyserver or a peer without losing local state.
 - Add `Certificate.userIdCertifications(userId)`, returning a `CertifierInfo`
   per third-party certificate that has certified `userId` (fingerprint plus
   whether that certification has since been revoked): the inspection
