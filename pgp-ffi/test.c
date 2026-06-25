@@ -838,6 +838,91 @@ int main(void) {
   free(preferences);
   pgp_certificate_free(cert_with_prefs);
 
+  struct Certificate *file_alice = NULL;
+  rc = pgp_key_generate("file-alice@example.org", &file_alice);
+  if (rc != 0 || file_alice == NULL) {
+    fprintf(stderr, "pgp_key_generate (file_alice) failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  struct Certificate *file_bob = NULL;
+  rc = pgp_key_generate("file-bob@example.org", &file_bob);
+  if (rc != 0 || file_bob == NULL) {
+    fprintf(stderr, "pgp_key_generate (file_bob) failed: rc=%" PRId32 "\n",
+            rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    return 1;
+  }
+
+  const char *plain_path = "/tmp/pgp_ffi_test_plain.txt";
+  const char *cipher_path = "/tmp/pgp_ffi_test_cipher.asc";
+  const char *out_path = "/tmp/pgp_ffi_test_out.txt";
+
+  FILE *plain_fp = fopen(plain_path, "wb");
+  if (plain_fp == NULL) {
+    fprintf(stderr, "failed to create %s\n", plain_path);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+  const char *file_payload = "streamed straight from disk, not memory";
+  fwrite(file_payload, 1, strlen(file_payload), plain_fp);
+  fclose(plain_fp);
+
+  struct Certificate *recipients[1] = {file_bob};
+  rc = pgp_encrypt_and_sign_file(file_alice, (const struct Certificate **)recipients,
+                                  1, plain_path, cipher_path);
+  if (rc != 0) {
+    fprintf(stderr, "pgp_encrypt_and_sign_file failed: rc=%" PRId32 "\n", rc);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+
+  char *file_signer_fp = NULL;
+  int64_t file_signed_at = 0;
+  rc = pgp_decrypt_and_verify_file(file_bob, file_alice, cipher_path, out_path,
+                                    &file_signer_fp, &file_signed_at);
+  if (rc != 0 || file_signer_fp == NULL || file_signed_at <= 0) {
+    fprintf(stderr, "pgp_decrypt_and_verify_file failed: rc=%" PRId32 "\n", rc);
+    if (file_signer_fp != NULL) free(file_signer_fp);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+  free(file_signer_fp);
+
+  FILE *out_fp = fopen(out_path, "rb");
+  if (out_fp == NULL) {
+    fprintf(stderr, "failed to open %s\n", out_path);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+  char out_buf[128] = {0};
+  size_t out_len = fread(out_buf, 1, sizeof(out_buf) - 1, out_fp);
+  fclose(out_fp);
+  if (out_len != strlen(file_payload) ||
+      strncmp(out_buf, file_payload, out_len) != 0) {
+    fprintf(stderr, "file round trip mismatch: got \"%s\"\n", out_buf);
+    pgp_certificate_free(cert);
+    pgp_certificate_free(file_alice);
+    pgp_certificate_free(file_bob);
+    return 1;
+  }
+
+  remove(plain_path);
+  remove(cipher_path);
+  remove(out_path);
+  pgp_certificate_free(file_alice);
+  pgp_certificate_free(file_bob);
+
   char *armored = NULL;
   rc = pgp_certificate_export_armored(cert, &armored);
   if (rc != 0 || armored == NULL) {

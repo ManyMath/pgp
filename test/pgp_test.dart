@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:pgp/pgp.dart';
@@ -1161,6 +1162,97 @@ void main() {
       final alice = pgp.generateKey('alice@example.org');
       expect(
         () => PGP.encryptAndSign(alice, [], 'hello'),
+        throwsA(isA<PgpException>()),
+      );
+      alice.dispose();
+    });
+  });
+
+  group('file-based streaming operations', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('pgp_dart_test_');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    test('encryptFile/decryptFile round-trip', () {
+      final cert = pgp.generateKey('file-alice@example.org');
+      final inputFile = File('${tmp.path}/plain.txt')
+        ..writeAsStringSync('streamed straight from disk');
+      final encryptedFile = File('${tmp.path}/cipher.asc');
+      final decryptedFile = File('${tmp.path}/plain.out');
+
+      cert.encryptFile(inputFile.path, encryptedFile.path);
+      expect(encryptedFile.existsSync(), isTrue);
+      expect(
+        encryptedFile.readAsStringSync(),
+        contains('-----BEGIN PGP MESSAGE-----'),
+      );
+
+      cert.decryptFile(encryptedFile.path, decryptedFile.path);
+      expect(decryptedFile.readAsStringSync(), 'streamed straight from disk');
+
+      cert.dispose();
+    });
+
+    test('decryptFile throws for a nonexistent input file', () {
+      final cert = pgp.generateKey('file-missing@example.org');
+      expect(
+        () => cert.decryptFile(
+          '${tmp.path}/does-not-exist.asc',
+          '${tmp.path}/out.txt',
+        ),
+        throwsA(isA<PgpException>()),
+      );
+      cert.dispose();
+    });
+
+    test('encryptAndSignFile round-trips through decryptAndVerifyFile', () {
+      final alice = pgp.generateKey('file-signer@example.org');
+      final bob = pgp.generateKey('file-recipient@example.org');
+      final alicePub = pgp.certificateFromArmored(alice.exportPublicArmored());
+      final bobPub = pgp.certificateFromArmored(bob.exportPublicArmored());
+
+      final inputFile = File('${tmp.path}/sign-plain.txt')
+        ..writeAsStringSync('large signed payload streamed');
+      final encryptedFile = File('${tmp.path}/sign-cipher.asc');
+      final decryptedFile = File('${tmp.path}/sign-plain.out');
+
+      PGP.encryptAndSignFile(
+        alice,
+        [bobPub],
+        inputFile.path,
+        encryptedFile.path,
+      );
+
+      final result = bob.decryptAndVerifyFile(
+        encryptedFile.path,
+        decryptedFile.path,
+        alicePub,
+      );
+      expect(decryptedFile.readAsStringSync(), 'large signed payload streamed');
+      expect(result.signerFingerprint.length, 40);
+      expect(result.hasSignedAt, isTrue);
+
+      alicePub.dispose();
+      bobPub.dispose();
+      alice.dispose();
+      bob.dispose();
+    });
+
+    test('encryptAndSignFile throws for empty recipient list', () {
+      final alice = pgp.generateKey('file-empty@example.org');
+      expect(
+        () => PGP.encryptAndSignFile(
+          alice,
+          [],
+          '${tmp.path}/in.txt',
+          '${tmp.path}/out.asc',
+        ),
         throwsA(isA<PgpException>()),
       );
       alice.dispose();

@@ -1104,4 +1104,74 @@ int32_t pgp_certificate_merge(const struct Certificate *base_cert,
                               const struct Certificate *other_cert,
                               struct Certificate **new_cert);
 
+/**
+ * Encrypt the file at `input_path` to `cert` and write an ASCII-armored
+ * message to `output_path`, streaming through the filesystem so the
+ * plaintext is never held in memory as a single buffer. See the
+ * "File-based streaming operations" section comment for why this exists
+ * alongside `pgp_certificate_encrypt_bytes`/`_string`.
+ *
+ * # Safety
+ * `cert`, `input_path`, and `output_path` must be non-null, NUL-terminated,
+ * valid UTF-8 paths.
+ */
+int32_t pgp_certificate_encrypt_file(const struct Certificate *cert,
+                                     const char *input_path,
+                                     const char *output_path);
+
+/**
+ * Decrypt the ASCII-armored message at `input_path` using `cert` and write
+ * the raw plaintext to `output_path`, streaming through the filesystem. See
+ * the "File-based streaming operations" section comment.
+ *
+ * # Safety
+ * `cert`, `input_path`, and `output_path` must be non-null, NUL-terminated,
+ * valid UTF-8 paths.
+ */
+int32_t pgp_certificate_decrypt_file(const struct Certificate *cert,
+                                     const char *input_path,
+                                     const char *output_path);
+
+/**
+ * Encrypt the file at `input_path` to all `count` recipient certificates and
+ * sign it with `signer_cert`, streaming the result to `output_path`. The
+ * file-based counterpart of `pgp_encrypt_and_sign_string`; see the
+ * "File-based streaming operations" section comment.
+ *
+ * # Safety
+ * `signer_cert`, `recipient_certs`, `input_path`, and `output_path` must be
+ * non-null; each element of `recipient_certs` must be a valid Certificate
+ * pointer.
+ */
+int32_t pgp_encrypt_and_sign_file(const struct Certificate *signer_cert,
+                                  const struct Certificate *const *recipient_certs,
+                                  uintptr_t count,
+                                  const char *input_path,
+                                  const char *output_path);
+
+/**
+ * Decrypt the ASCII-armored message at `input_path` with `decrypt_cert` and
+ * verify its signature against `verify_cert`, streaming the plaintext to
+ * `output_path`. Writes the signer's fingerprint to `*fingerprint_out`
+ * (caller must free with `free()`). Returns `Failed` (-3) if the message
+ * carries no valid signature. The file-based counterpart of
+ * `pgp_decrypt_and_verify_string`; see the "File-based streaming operations"
+ * section comment.
+ *
+ * If `signature_creation_epoch` is non-null, the signature's own creation
+ * time is written to `*signature_creation_epoch` as seconds since the Unix
+ * epoch (0 if absent). Pass null if not needed.
+ *
+ * # Safety
+ * `decrypt_cert`, `verify_cert`, `input_path`, `output_path`, and
+ * `fingerprint_out` must be non-null. `signature_creation_epoch` may be
+ * null.
+ */
+int32_t pgp_decrypt_and_verify_file(const struct Certificate *decrypt_cert,
+                                    const struct Certificate *verify_cert,
+                                    const char *input_path,
+                                    const char *output_path,
+                                    char **fingerprint_out,
+                                    int64_t *signature_creation_epoch);
+
 #endif  /* pgp_ffi_h */

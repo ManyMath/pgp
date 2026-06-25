@@ -1,5 +1,23 @@
 ## Unreleased
 
+- Added file-based streaming encrypt/decrypt/sign/verify:
+  `Certificate.encryptFile(inputPath, outputPath)`,
+  `Certificate.decryptFile(inputPath, outputPath)`,
+  `PGP.encryptAndSignFile(signer, recipients, inputPath, outputPath)`, and
+  `Certificate.decryptAndVerifyFile(inputPath, outputPath, verifyCert)`
+  (returning a new `FileSignatureInfo`). Every previous encrypt/decrypt/sign
+  entry point required the whole plaintext or ciphertext to already be an
+  in-memory `String`/`Uint8List`, so encrypting a file larger than would
+  comfortably fit in RAM (e.g. a multi-gigabyte backup) required holding
+  several times its size in spare memory. The new native entry points
+  (`pgp_certificate_encrypt_file`, `pgp_certificate_decrypt_file`,
+  `pgp_encrypt_and_sign_file`, `pgp_decrypt_and_verify_file`) stream directly
+  between files via Sequoia's `Read`/`Write`-based API, so peak memory use no
+  longer scales with file size; on failure, any output file already created
+  is removed rather than left behind as an unusable partial result. Added 5
+  Rust unit tests, a `test.c` round-trip step, and regenerated the C header
+  and Dart bindings.
+
 - Added `Certificate.setPreferences({symmetricAlgorithms, hashAlgorithms,
   compressionAlgorithms, features})` and `Certificate.preferences()`,
   exposing the RFC 4880 algorithm-preference and Features self-signature

@@ -347,6 +347,32 @@ class SignedPlaintext {
       : null;
 }
 
+/// Signer fingerprint and signature time returned by
+/// [Certificate.decryptAndVerifyFile]: the file-based counterpart of
+/// [SignedPlaintext], minus the plaintext itself since that's streamed to the
+/// output file rather than returned in memory.
+class FileSignatureInfo {
+  /// 40-character uppercase hex fingerprint of the signing subkey.
+  final String signerFingerprint;
+
+  /// The signature's own creation time, as seconds since the Unix epoch, or
+  /// 0 if absent.
+  final int signedAtEpoch;
+
+  const FileSignatureInfo({
+    required this.signerFingerprint,
+    this.signedAtEpoch = 0,
+  });
+
+  /// Whether [signedAtEpoch] carries a value.
+  bool get hasSignedAt => signedAtEpoch > 0;
+
+  /// [signedAtEpoch] as a [DateTime], or null if absent.
+  DateTime? get signedAtDate => hasSignedAt
+      ? DateTime.fromMillisecondsSinceEpoch(signedAtEpoch * 1000, isUtc: true)
+      : null;
+}
+
 /// A message's symmetric session key, returned by [Certificate.sessionKey]
 /// without decrypting the message body: see that method for why this is
 /// useful (archival/escrow decryption without exposing a long-term key).
@@ -442,6 +468,53 @@ class Certificate {
         message,
         _bindings.pgp_certificate_decrypt_string,
       );
+
+  /// Encrypts the file at [inputPath] to this certificate, streaming the
+  /// ASCII-armored result to [outputPath].
+  ///
+  /// Unlike [encrypt], which requires the whole plaintext to already be a
+  /// Dart [String] in memory, this streams the data straight from/to disk on
+  /// the native side, so encrypting a file far larger than would comfortably
+  /// fit in memory (e.g. a multi-gigabyte backup) doesn't require ever
+  /// holding it all at once. Throws [PgpException] on failure; any output
+  /// file already created is removed first.
+  void encryptFile(String inputPath, String outputPath) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    try {
+      final code = _bindings.pgp_certificate_encrypt_file(
+        _ptr,
+        inPtr.cast(),
+        outPtr.cast(),
+      );
+      if (code != 0) throw PgpException(code);
+    } finally {
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  /// Decrypts the ASCII-armored message at [inputPath] with this secret
+  /// certificate, streaming the plaintext to [outputPath]. The file-based
+  /// counterpart of [decrypt]; see [encryptFile] for why this exists.
+  ///
+  /// Throws [PgpException] on failure; any output file already created is
+  /// removed first.
+  void decryptFile(String inputPath, String outputPath) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    try {
+      final code = _bindings.pgp_certificate_decrypt_file(
+        _ptr,
+        inPtr.cast(),
+        outPtr.cast(),
+      );
+      if (code != 0) throw PgpException(code);
+    } finally {
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+    }
+  }
 
   /// Recovers the symmetric session key that encrypts [message]'s body,
   /// using this certificate's transport-encryption subkey(s), *without*
@@ -1513,6 +1586,48 @@ class Certificate {
     }
   }
 
+  /// Decrypts and verifies a signed+encrypted message at [inputPath]
+  /// (produced by [PGP.encryptAndSignFile]), streaming the plaintext to
+  /// [outputPath]. [verifyCert] is the signer's public certificate. The
+  /// file-based counterpart of [decryptAndVerify]; see [encryptFile] for why
+  /// this exists.
+  ///
+  /// Returns the signer's fingerprint and the signature's creation time.
+  /// Throws [PgpException] if decryption or verification fails; any output
+  /// file already created is removed first.
+  FileSignatureInfo decryptAndVerifyFile(
+    String inputPath,
+    String outputPath,
+    Certificate verifyCert,
+  ) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
+    try {
+      final code = _bindings.pgp_decrypt_and_verify_file(
+        _ptr,
+        verifyCert._ptr,
+        inPtr.cast(),
+        outPtr.cast(),
+        fpOut,
+        epochOut,
+      );
+      if (code != 0) throw PgpException(code);
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      calloc.free(fpOut.value);
+      return FileSignatureInfo(
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+      );
+    } finally {
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+      calloc.free(fpOut);
+      calloc.free(epochOut);
+    }
+  }
+
   /// Signs [plaintext] with this secret certificate and encrypts it with
   /// [passphrase] (no recipient public key required): the passphrase-only
   /// counterpart to [PGP.encryptAndSign]. Returns a single ASCII-armored
@@ -1749,6 +1864,42 @@ class PGP {
       calloc.free(certsArray);
       calloc.free(plaintextPtr);
       calloc.free(out);
+    }
+  }
+
+  /// Encrypts the file at [inputPath] to all [recipients] and signs it with
+  /// [signer], streaming the ASCII-armored result to [outputPath]. The
+  /// file-based counterpart of [encryptAndSign]; see
+  /// [Certificate.encryptFile] for why this exists. Any recipient can call
+  /// [Certificate.decryptAndVerifyFile] with the signer's public certificate
+  /// to recover the plaintext and confirm authenticity.
+  static void encryptAndSignFile(
+    Certificate signer,
+    List<Certificate> recipients,
+    String inputPath,
+    String outputPath,
+  ) {
+    if (recipients.isEmpty) throw PgpException(-4);
+
+    final certsArray = calloc<Pointer<ffi.Certificate>>(recipients.length);
+    for (var i = 0; i < recipients.length; i++) {
+      certsArray[i] = recipients[i].pointer;
+    }
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    try {
+      final code = _bindings.pgp_encrypt_and_sign_file(
+        signer._ptr,
+        certsArray.cast(),
+        recipients.length,
+        inPtr.cast(),
+        outPtr.cast(),
+      );
+      if (code != 0) throw PgpException(code);
+    } finally {
+      calloc.free(certsArray);
+      calloc.free(inPtr);
+      calloc.free(outPtr);
     }
   }
 

@@ -2345,6 +2345,159 @@ class PgpFfiBindings {
   late final _pgp_certificate_merge = _pgp_certificate_mergePtr.asFunction<
       int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
           ffi.Pointer<ffi.Pointer<Certificate>>)>();
+
+  /// Encrypt the file at `input_path` to `cert` and write an ASCII-armored
+  /// message to `output_path`, streaming through the filesystem so the
+  /// plaintext is never held in memory as a single buffer. See the
+  /// "File-based streaming operations" section comment for why this exists
+  /// alongside `pgp_certificate_encrypt_bytes`/`_string`.
+  ///
+  /// # Safety
+  /// `cert`, `input_path`, and `output_path` must be non-null, NUL-terminated,
+  /// valid UTF-8 paths.
+  int pgp_certificate_encrypt_file(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Char> input_path,
+    ffi.Pointer<ffi.Char> output_path,
+  ) {
+    return _pgp_certificate_encrypt_file(
+      cert,
+      input_path,
+      output_path,
+    );
+  }
+
+  late final _pgp_certificate_encrypt_filePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>)>>('pgp_certificate_encrypt_file');
+  late final _pgp_certificate_encrypt_file =
+      _pgp_certificate_encrypt_filePtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>)>();
+
+  /// Decrypt the ASCII-armored message at `input_path` using `cert` and write
+  /// the raw plaintext to `output_path`, streaming through the filesystem. See
+  /// the "File-based streaming operations" section comment.
+  ///
+  /// # Safety
+  /// `cert`, `input_path`, and `output_path` must be non-null, NUL-terminated,
+  /// valid UTF-8 paths.
+  int pgp_certificate_decrypt_file(
+    ffi.Pointer<Certificate> cert,
+    ffi.Pointer<ffi.Char> input_path,
+    ffi.Pointer<ffi.Char> output_path,
+  ) {
+    return _pgp_certificate_decrypt_file(
+      cert,
+      input_path,
+      output_path,
+    );
+  }
+
+  late final _pgp_certificate_decrypt_filePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>)>>('pgp_certificate_decrypt_file');
+  late final _pgp_certificate_decrypt_file =
+      _pgp_certificate_decrypt_filePtr.asFunction<
+          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>)>();
+
+  /// Encrypt the file at `input_path` to all `count` recipient certificates and
+  /// sign it with `signer_cert`, streaming the result to `output_path`. The
+  /// file-based counterpart of `pgp_encrypt_and_sign_string`; see the
+  /// "File-based streaming operations" section comment.
+  ///
+  /// # Safety
+  /// `signer_cert`, `recipient_certs`, `input_path`, and `output_path` must be
+  /// non-null; each element of `recipient_certs` must be a valid Certificate
+  /// pointer.
+  int pgp_encrypt_and_sign_file(
+    ffi.Pointer<Certificate> signer_cert,
+    ffi.Pointer<ffi.Pointer<Certificate>> recipient_certs,
+    int count,
+    ffi.Pointer<ffi.Char> input_path,
+    ffi.Pointer<ffi.Char> output_path,
+  ) {
+    return _pgp_encrypt_and_sign_file(
+      signer_cert,
+      recipient_certs,
+      count,
+      input_path,
+      output_path,
+    );
+  }
+
+  late final _pgp_encrypt_and_sign_filePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+              ffi.UintPtr,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>)>>('pgp_encrypt_and_sign_file');
+  late final _pgp_encrypt_and_sign_file =
+      _pgp_encrypt_and_sign_filePtr.asFunction<
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+              int,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>)>();
+
+  /// Decrypt the ASCII-armored message at `input_path` with `decrypt_cert` and
+  /// verify its signature against `verify_cert`, streaming the plaintext to
+  /// `output_path`. Writes the signer's fingerprint to `*fingerprint_out`
+  /// (caller must free with `free()`). Returns `Failed` (-3) if the message
+  /// carries no valid signature. The file-based counterpart of
+  /// `pgp_decrypt_and_verify_string`; see the "File-based streaming operations"
+  /// section comment.
+  ///
+  /// If `signature_creation_epoch` is non-null, the signature's own creation
+  /// time is written to `*signature_creation_epoch` as seconds since the Unix
+  /// epoch (0 if absent). Pass null if not needed.
+  ///
+  /// # Safety
+  /// `decrypt_cert`, `verify_cert`, `input_path`, `output_path`, and
+  /// `fingerprint_out` must be non-null. `signature_creation_epoch` may be
+  /// null.
+  int pgp_decrypt_and_verify_file(
+    ffi.Pointer<Certificate> decrypt_cert,
+    ffi.Pointer<Certificate> verify_cert,
+    ffi.Pointer<ffi.Char> input_path,
+    ffi.Pointer<ffi.Char> output_path,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> fingerprint_out,
+    ffi.Pointer<ffi.Int64> signature_creation_epoch,
+  ) {
+    return _pgp_decrypt_and_verify_file(
+      decrypt_cert,
+      verify_cert,
+      input_path,
+      output_path,
+      fingerprint_out,
+      signature_creation_epoch,
+    );
+  }
+
+  late final _pgp_decrypt_and_verify_filePtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Int32 Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>>('pgp_decrypt_and_verify_file');
+  late final _pgp_decrypt_and_verify_file =
+      _pgp_decrypt_and_verify_filePtr.asFunction<
+          int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+              ffi.Pointer<ffi.Int64>)>();
 }
 
 final class Certificate extends ffi.Opaque {}

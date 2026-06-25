@@ -21,7 +21,8 @@ use sequoia_openpgp::{
     KeyHandle, Result,
 };
 use std::ffi::CStr;
-use std::io::{Cursor, Read, Write};
+use std::fs::File;
+use std::io::{BufWriter, Cursor, Read, Write};
 use std::ptr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -62,6 +63,11 @@ unsafe fn revocation_message_bytes<'a>(
         Ok(s) => Ok(s.as_bytes()),
         Err(_) => Err(FFIError::Invalid as i32),
     }
+}
+
+/// Borrow a NUL-terminated C string as a UTF-8 file path.
+unsafe fn path_str<'a>(path: *const libc::c_char) -> std::result::Result<&'a str, i32> {
+    CStr::from_ptr(path).to_str().map_err(|_| FFIError::Invalid as i32)
 }
 
 unsafe fn write_bytes_buffer(data: &[u8], out: *mut *mut u8, out_len: *mut usize) -> i32 {
@@ -4750,6 +4756,417 @@ pub unsafe extern "C" fn pgp_certificate_merge(
     FFIError::Ok as i32
 }
 
+// -- Feature: File-based streaming operations
+//
+// Every other encrypt/decrypt/sign/verify entry point takes its plaintext or
+// ciphertext as an in-memory string or byte buffer, requiring the whole
+// message to already be resident in RAM on both sides of the FFI boundary
+// (and, on the Dart side, copied into a `Uint8List`). That's fine for chat
+// messages but breaks down for anything approaching the size of a file
+// backup: a multi-gigabyte input would need multiple times its own size in
+// spare memory just to encrypt it. These entry points instead take input and
+// output file paths and stream the data straight from/to disk through
+// Sequoia's own `Read`/`Write`-based streaming API, so peak memory use stays
+// bounded regardless of file size.
+//
+// If an error occurs partway through, any output file already created is
+// removed rather than left behind as a truncated, unusable partial result.
+
+/// Remove `path` best-effort, ignoring errors (used to clean up a partially
+/// written output file after a mid-stream failure).
+fn remove_partial_output(path: &str) {
+    let _ = std::fs::remove_file(path);
+}
+
+/// Encrypt the file at `input_path` to `cert` and write an ASCII-armored
+/// message to `output_path`, streaming through the filesystem so the
+/// plaintext is never held in memory as a single buffer. See the
+/// "File-based streaming operations" section comment for why this exists
+/// alongside `pgp_certificate_encrypt_bytes`/`_string`.
+///
+/// # Safety
+/// `cert`, `input_path`, and `output_path` must be non-null, NUL-terminated,
+/// valid UTF-8 paths.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_encrypt_file(
+    cert: *const Certificate,
+    input_path: *const libc::c_char,
+    output_path: *const libc::c_char,
+) -> i32 {
+    if cert.is_null() || input_path.is_null() || output_path.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+
+    let input_path = match path_str(input_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let output_path = match path_str(output_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let mut input = match File::open(input_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::NotFound as i32,
+    };
+    let output = match File::create(output_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let policy = &StandardPolicy::new();
+    let recipients = cert
+        .keys()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_transport_encryption()
+        .collect::<Vec<_>>();
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let message = Message::new(BufWriter::new(output));
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let message = match Encryptor::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+
+    if std::io::copy(&mut input, &mut message).is_err() || message.finalize().is_err() {
+        remove_partial_output(output_path);
+        return FFIError::Failed as i32;
+    }
+
+    FFIError::Ok as i32
+}
+
+/// Decrypt the ASCII-armored message at `input_path` using `cert` and write
+/// the raw plaintext to `output_path`, streaming through the filesystem. See
+/// the "File-based streaming operations" section comment.
+///
+/// # Safety
+/// `cert`, `input_path`, and `output_path` must be non-null, NUL-terminated,
+/// valid UTF-8 paths.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_decrypt_file(
+    cert: *const Certificate,
+    input_path: *const libc::c_char,
+    output_path: *const libc::c_char,
+) -> i32 {
+    if cert.is_null() || input_path.is_null() || output_path.is_null() {
+        return FFIError::Null as i32;
+    }
+
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let cert = &*wrapper.0;
+
+    let input_path = match path_str(input_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let output_path = match path_str(output_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let mut output = match File::create(output_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let policy = &StandardPolicy::new();
+    let helper = DecryptOnlyHelper {
+        secret: cert,
+        policy,
+    };
+    let mut decryptor = match DecryptorBuilder::from_file(input_path) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(d) => d,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    if std::io::copy(&mut decryptor, &mut output).is_err() {
+        remove_partial_output(output_path);
+        return FFIError::Failed as i32;
+    }
+
+    FFIError::Ok as i32
+}
+
+/// Encrypt the file at `input_path` to all `count` recipient certificates and
+/// sign it with `signer_cert`, streaming the result to `output_path`. The
+/// file-based counterpart of `pgp_encrypt_and_sign_string`; see the
+/// "File-based streaming operations" section comment.
+///
+/// # Safety
+/// `signer_cert`, `recipient_certs`, `input_path`, and `output_path` must be
+/// non-null; each element of `recipient_certs` must be a valid Certificate
+/// pointer.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_encrypt_and_sign_file(
+    signer_cert: *const Certificate,
+    recipient_certs: *const *const Certificate,
+    count: usize,
+    input_path: *const libc::c_char,
+    output_path: *const libc::c_char,
+) -> i32 {
+    if signer_cert.is_null()
+        || recipient_certs.is_null()
+        || input_path.is_null()
+        || output_path.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    if count == 0 {
+        return FFIError::NotFound as i32;
+    }
+
+    let signer_wrapper = &*signer_cert;
+    if signer_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let signer_cert_ref = &*signer_wrapper.0;
+
+    let input_path = match path_str(input_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let output_path = match path_str(output_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let mut input = match File::open(input_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::NotFound as i32,
+    };
+    let output = match File::create(output_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let policy = &StandardPolicy::new();
+
+    let signing_key = match signer_cert_ref
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => return FFIError::NotFound as i32,
+    };
+    let keypair = match signing_key.into_keypair() {
+        Ok(kp) => kp,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let mut cert_vec: Vec<SequoiaCert> = Vec::with_capacity(count);
+    for i in 0..count {
+        let outer_ptr = *recipient_certs.add(i);
+        if outer_ptr.is_null() {
+            return FFIError::Null as i32;
+        }
+        let wrapper = &*outer_ptr;
+        if wrapper.0.is_null() {
+            return FFIError::Invalid as i32;
+        }
+        cert_vec.push((&*wrapper.0).clone());
+    }
+
+    let mut recipients: Vec<_> = Vec::new();
+    for cert in cert_vec.iter() {
+        for ka in cert
+            .keys()
+            .with_policy(policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+        {
+            recipients.push(ka);
+        }
+    }
+    if recipients.is_empty() {
+        return FFIError::NotFound as i32;
+    }
+
+    let message = Message::new(BufWriter::new(output));
+    let message = match Armorer::new(message).kind(armor::Kind::Message).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let message = match Encryptor::for_recipients(message, recipients).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let signer = match Signer::new(message, keypair) {
+        Ok(s) => s,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let message = match signer.build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    let mut message = match LiteralWriter::new(message).build() {
+        Ok(m) => m,
+        Err(_) => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+
+    if std::io::copy(&mut input, &mut message).is_err() || message.finalize().is_err() {
+        remove_partial_output(output_path);
+        return FFIError::Failed as i32;
+    }
+
+    FFIError::Ok as i32
+}
+
+/// Decrypt the ASCII-armored message at `input_path` with `decrypt_cert` and
+/// verify its signature against `verify_cert`, streaming the plaintext to
+/// `output_path`. Writes the signer's fingerprint to `*fingerprint_out`
+/// (caller must free with `free()`). Returns `Failed` (-3) if the message
+/// carries no valid signature. The file-based counterpart of
+/// `pgp_decrypt_and_verify_string`; see the "File-based streaming operations"
+/// section comment.
+///
+/// If `signature_creation_epoch` is non-null, the signature's own creation
+/// time is written to `*signature_creation_epoch` as seconds since the Unix
+/// epoch (0 if absent). Pass null if not needed.
+///
+/// # Safety
+/// `decrypt_cert`, `verify_cert`, `input_path`, `output_path`, and
+/// `fingerprint_out` must be non-null. `signature_creation_epoch` may be
+/// null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_and_verify_file(
+    decrypt_cert: *const Certificate,
+    verify_cert: *const Certificate,
+    input_path: *const libc::c_char,
+    output_path: *const libc::c_char,
+    fingerprint_out: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+) -> i32 {
+    if decrypt_cert.is_null()
+        || verify_cert.is_null()
+        || input_path.is_null()
+        || output_path.is_null()
+        || fingerprint_out.is_null()
+    {
+        return FFIError::Null as i32;
+    }
+    *fingerprint_out = ptr::null_mut();
+
+    let decrypt_wrapper = &*decrypt_cert;
+    if decrypt_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let verify_wrapper = &*verify_cert;
+    if verify_wrapper.0.is_null() {
+        return FFIError::Invalid as i32;
+    }
+    let decrypt_cert_ref = &*decrypt_wrapper.0;
+    let verify_cert_ref = &*verify_wrapper.0;
+
+    let input_path = match path_str(input_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let output_path = match path_str(output_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let mut output = match File::create(output_path) {
+        Ok(f) => f,
+        Err(_) => return FFIError::Failed as i32,
+    };
+
+    let policy = &StandardPolicy::new();
+    let helper = DecryptAndVerifyHelper {
+        decrypt_cert: decrypt_cert_ref,
+        verify_cert: verify_cert_ref,
+        policy,
+        signer_fp: None,
+        signature_creation_epoch: None,
+    };
+
+    let mut decryptor = match DecryptorBuilder::from_file(input_path) {
+        Ok(builder) => match builder.with_policy(policy, None, helper) {
+            Ok(d) => d,
+            Err(_) => return FFIError::Failed as i32,
+        },
+        Err(_) => return FFIError::Invalid as i32,
+    };
+
+    if std::io::copy(&mut decryptor, &mut output).is_err() {
+        remove_partial_output(output_path);
+        return FFIError::Failed as i32;
+    }
+
+    let helper = decryptor.into_helper();
+    let fp = match helper.signer_fp {
+        Some(fp) => fp,
+        None => {
+            remove_partial_output(output_path);
+            return FFIError::Failed as i32;
+        }
+    };
+    if !signature_creation_epoch.is_null() {
+        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
+    }
+
+    write_c_string(&fp, fingerprint_out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4762,6 +5179,21 @@ mod tests {
         assert_eq!(rc, FFIError::Ok as i32);
         assert!(!cert.is_null());
         cert
+    }
+
+    /// A path in the OS temp directory guaranteed unique for the lifetime of
+    /// the test process, so parallel `#[test]`s never collide on the same
+    /// file.
+    fn unique_temp_path(label: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "pgp-ffi-test-{}-{}-{}",
+            std::process::id(),
+            n,
+            label
+        ))
     }
 
     // --- null-pointer handling ---
@@ -8404,6 +8836,157 @@ mod tests {
             let cert = generate_cert("preferences-read-null@example.org");
             assert_eq!(
                 pgp_certificate_preferences(cert, ptr::null_mut()),
+                FFIError::Null as i32
+            );
+            pgp_certificate_free(cert);
+        }
+    }
+
+    // --- file-based streaming operations ---
+
+    #[test]
+    fn encrypt_file_decrypt_file_round_trip() {
+        unsafe {
+            let cert = generate_cert("file-crypt@example.org");
+            let input_path = unique_temp_path("plain.txt");
+            let encrypted_path = unique_temp_path("cipher.asc");
+            let decrypted_path = unique_temp_path("plain.out");
+            std::fs::write(&input_path, b"streamed to disk, not memory").unwrap();
+
+            let c_input = CString::new(input_path.to_str().unwrap()).unwrap();
+            let c_encrypted = CString::new(encrypted_path.to_str().unwrap()).unwrap();
+            let rc = pgp_certificate_encrypt_file(cert, c_input.as_ptr(), c_encrypted.as_ptr());
+            assert_eq!(rc, FFIError::Ok as i32);
+            assert!(encrypted_path.exists());
+
+            let c_decrypted = CString::new(decrypted_path.to_str().unwrap()).unwrap();
+            let rc =
+                pgp_certificate_decrypt_file(cert, c_encrypted.as_ptr(), c_decrypted.as_ptr());
+            assert_eq!(rc, FFIError::Ok as i32);
+
+            let plaintext = std::fs::read(&decrypted_path).unwrap();
+            assert_eq!(plaintext, b"streamed to disk, not memory");
+
+            pgp_certificate_free(cert);
+            let _ = std::fs::remove_file(&input_path);
+            let _ = std::fs::remove_file(&encrypted_path);
+            let _ = std::fs::remove_file(&decrypted_path);
+        }
+    }
+
+    #[test]
+    fn decrypt_file_rejects_missing_input_and_cleans_up_no_output() {
+        unsafe {
+            let cert = generate_cert("file-missing-input@example.org");
+            let missing_input = unique_temp_path("does-not-exist.asc");
+            let output_path = unique_temp_path("out.txt");
+
+            let c_input = CString::new(missing_input.to_str().unwrap()).unwrap();
+            let c_output = CString::new(output_path.to_str().unwrap()).unwrap();
+            let rc = pgp_certificate_decrypt_file(cert, c_input.as_ptr(), c_output.as_ptr());
+            assert_eq!(rc, FFIError::Invalid as i32);
+
+            pgp_certificate_free(cert);
+            let _ = std::fs::remove_file(&output_path);
+        }
+    }
+
+    #[test]
+    fn encrypt_file_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("file-null@example.org");
+            let path = CString::new("/tmp/whatever").unwrap();
+            assert_eq!(
+                pgp_certificate_encrypt_file(ptr::null(), path.as_ptr(), path.as_ptr()),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_encrypt_file(cert, ptr::null(), path.as_ptr()),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_certificate_encrypt_file(cert, path.as_ptr(), ptr::null()),
+                FFIError::Null as i32
+            );
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn encrypt_and_sign_file_decrypt_and_verify_file_round_trip() {
+        unsafe {
+            let signer = generate_cert("file-signer@example.org");
+            let recipient = generate_cert("file-recipient@example.org");
+            let input_path = unique_temp_path("sign-plain.txt");
+            let encrypted_path = unique_temp_path("sign-cipher.asc");
+            let decrypted_path = unique_temp_path("sign-plain.out");
+            std::fs::write(&input_path, b"large signed payload streamed").unwrap();
+
+            let c_input = CString::new(input_path.to_str().unwrap()).unwrap();
+            let c_encrypted = CString::new(encrypted_path.to_str().unwrap()).unwrap();
+            let recipients: [*const Certificate; 1] = [recipient];
+            let rc = pgp_encrypt_and_sign_file(
+                signer,
+                recipients.as_ptr(),
+                1,
+                c_input.as_ptr(),
+                c_encrypted.as_ptr(),
+            );
+            assert_eq!(rc, FFIError::Ok as i32);
+
+            let c_decrypted = CString::new(decrypted_path.to_str().unwrap()).unwrap();
+            let mut fingerprint_out: *mut libc::c_char = ptr::null_mut();
+            let mut epoch: i64 = 0;
+            let rc = pgp_decrypt_and_verify_file(
+                recipient,
+                signer,
+                c_encrypted.as_ptr(),
+                c_decrypted.as_ptr(),
+                &mut fingerprint_out,
+                &mut epoch,
+            );
+            assert_eq!(rc, FFIError::Ok as i32);
+            assert!(!fingerprint_out.is_null());
+            assert!(epoch > 0);
+
+            let plaintext = std::fs::read(&decrypted_path).unwrap();
+            assert_eq!(plaintext, b"large signed payload streamed");
+
+            libc::free(fingerprint_out as *mut libc::c_void);
+            pgp_certificate_free(signer);
+            pgp_certificate_free(recipient);
+            let _ = std::fs::remove_file(&input_path);
+            let _ = std::fs::remove_file(&encrypted_path);
+            let _ = std::fs::remove_file(&decrypted_path);
+        }
+    }
+
+    #[test]
+    fn decrypt_and_verify_file_rejects_null_args() {
+        unsafe {
+            let cert = generate_cert("file-verify-null@example.org");
+            let path = CString::new("/tmp/whatever").unwrap();
+            let mut fp: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_decrypt_and_verify_file(
+                    ptr::null(),
+                    cert,
+                    path.as_ptr(),
+                    path.as_ptr(),
+                    &mut fp,
+                    ptr::null_mut(),
+                ),
+                FFIError::Null as i32
+            );
+            assert_eq!(
+                pgp_decrypt_and_verify_file(
+                    cert,
+                    cert,
+                    path.as_ptr(),
+                    path.as_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
                 FFIError::Null as i32
             );
             pgp_certificate_free(cert);
