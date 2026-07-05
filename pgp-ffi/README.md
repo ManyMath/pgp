@@ -8,7 +8,7 @@ For the optional in-repo C smoke test (`test.c`), you'll need a C compiler (e.g.
 
 ## Development
 - Install `cbindgen`: `cargo install --force cbindgen`.
-- `cargo build` regenerates `pgp-ffi.h` automatically via `build.rs`.
+- Regenerate `pgp-ffi.h`: `cargo build --features header`.
 - To run the C smoke test:
   - `cargo build`
   - `gcc test.c -I. -L./target/debug -lpgp_ffi -o test_runner`

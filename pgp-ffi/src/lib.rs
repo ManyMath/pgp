@@ -1,16 +1,16 @@
 use sequoia_openpgp::{
     armor,
-    cert::{Cert as SequoiaCert, CertBuilder},
     cert::prelude::*,
+    cert::{Cert as SequoiaCert, CertBuilder},
     crypto::{Password, SessionKey},
+    packet::{UserID as SequoiaUserID, PKESK, SKESK},
     parse::{
         stream::{
-            DecryptionHelper, DecryptorBuilder, DetachedVerifierBuilder,
-            MessageLayer, MessageStructure, VerificationHelper, VerifierBuilder,
+            DecryptionHelper, DecryptorBuilder, DetachedVerifierBuilder, MessageLayer,
+            MessageStructure, VerificationHelper, VerifierBuilder,
         },
         Parse,
     },
-    packet::{PKESK, SKESK, UserID as SequoiaUserID},
     policy::{Policy, StandardPolicy},
     serialize::stream::{Armorer, Encryptor, LiteralWriter, Message, Signer},
     serialize::Serialize,
@@ -67,7 +67,9 @@ unsafe fn revocation_message_bytes<'a>(
 
 /// Borrow a NUL-terminated C string as a UTF-8 file path.
 unsafe fn path_str<'a>(path: *const libc::c_char) -> std::result::Result<&'a str, i32> {
-    CStr::from_ptr(path).to_str().map_err(|_| FFIError::Invalid as i32)
+    CStr::from_ptr(path)
+        .to_str()
+        .map_err(|_| FFIError::Invalid as i32)
 }
 
 unsafe fn write_bytes_buffer(data: &[u8], out: *mut *mut u8, out_len: *mut usize) -> i32 {
@@ -180,7 +182,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 }
 
 fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     (0..hex.len())
@@ -278,6 +280,15 @@ impl DecryptionHelper for RawSessionKeyHelper {
             Err(anyhow::anyhow!("Session key did not decrypt the message"))
         }
     }
+}
+
+/// Free a string or byte buffer returned through an `out` parameter.
+///
+/// # Safety
+/// `ptr` must be null or a buffer this library allocated, freed at most once.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_free(ptr: *mut libc::c_void) {
+    libc::free(ptr);
 }
 
 /// # Safety
@@ -650,9 +661,7 @@ pub unsafe extern "C" fn pgp_message_recipient_key_ids(
                     // `KeyHandle` (e.g. for PKESKv6 packets); normalize to the
                     // low 64-bit key ID to match this function's documented
                     // 16-character-hex-key-ID contract.
-                    Some(recipient) => {
-                        Some(sequoia_openpgp::KeyID::from(recipient).to_hex())
-                    }
+                    Some(recipient) => Some(sequoia_openpgp::KeyID::from(recipient).to_hex()),
                 }
             }
             _ => None,
@@ -686,8 +695,7 @@ pub unsafe extern "C" fn pgp_message_session_key(
     session_key_hex: *mut *mut libc::c_char,
     algo: *mut u8,
 ) -> i32 {
-    if cert.is_null() || armored_message.is_null() || session_key_hex.is_null() || algo.is_null()
-    {
+    if cert.is_null() || armored_message.is_null() || session_key_hex.is_null() || algo.is_null() {
         return FFIError::Null as i32;
     }
     *session_key_hex = ptr::null_mut();
@@ -810,7 +818,11 @@ pub unsafe extern "C" fn pgp_decrypt_with_session_key(
     let policy = &StandardPolicy::new();
     let helper = RawSessionKeyHelper {
         session_key: SessionKey::from(key_bytes),
-        algo: if algo == 0 { None } else { Some(SymmetricAlgorithm::from(algo)) },
+        algo: if algo == 0 {
+            None
+        } else {
+            Some(SymmetricAlgorithm::from(algo))
+        },
     };
     let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
         Ok(builder) => match builder.with_policy(policy, None, helper) {
@@ -1028,7 +1040,8 @@ pub unsafe extern "C" fn pgp_certificate_revoke(
     };
 
     let sig = match CertRevocationBuilder::new()
-        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes) {
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes)
+    {
         Ok(b) => match b.build(&mut signer, &cert, None) {
             Ok(sig) => sig,
             Err(_) => return FFIError::Failed as i32,
@@ -1463,9 +1476,13 @@ pub unsafe extern "C" fn pgp_certificate_verify_designated_revocation(
     }
 
     let sig = match target.revocation_status(&policy, None) {
-        RevocationStatus::CouldBe(sigs) | RevocationStatus::Revoked(sigs) => sigs
-            .into_iter()
-            .find(|sig| sig.get_issuers().iter().any(|kh| kh.aliases(&revoker_handle))),
+        RevocationStatus::CouldBe(sigs) | RevocationStatus::Revoked(sigs) => {
+            sigs.into_iter().find(|sig| {
+                sig.get_issuers()
+                    .iter()
+                    .any(|kh| kh.aliases(&revoker_handle))
+            })
+        }
         RevocationStatus::NotAsFarAsWeKnow => None,
     };
     let sig = match sig {
@@ -1550,10 +1567,11 @@ pub unsafe extern "C" fn pgp_certificate_set_preferences(
         .iter()
         .map(|&b| HashAlgorithm::from(b))
         .collect();
-    let compression_prefs: Vec<CompressionAlgorithm> = raw_slice(compression_algos, compression_algos_len)
-        .iter()
-        .map(|&b| CompressionAlgorithm::from(b))
-        .collect();
+    let compression_prefs: Vec<CompressionAlgorithm> =
+        raw_slice(compression_algos, compression_algos_len)
+            .iter()
+            .map(|&b| CompressionAlgorithm::from(b))
+            .collect();
 
     let policy = StandardPolicy::new();
     let vc = match sequoia_cert.with_policy(&policy, None) {
@@ -1673,7 +1691,10 @@ pub unsafe extern "C" fn pgp_certificate_preferences(
         .unwrap_or(0);
 
     write_c_string(
-        &format!("{}\t{}\t{}\t{}", sym_csv, hash_csv, compression_csv, features),
+        &format!(
+            "{}\t{}\t{}\t{}",
+            sym_csv, hash_csv, compression_csv, features
+        ),
         out,
     )
 }
@@ -1704,8 +1725,7 @@ pub unsafe extern "C" fn pgp_certificate_add_transport_encryption_subkey(
         Err(_) => return FFIError::Failed as i32,
     };
 
-    let updated = match KeyBuilder::new(KeyFlags::empty().set_transport_encryption())
-        .subkey(vc) {
+    let updated = match KeyBuilder::new(KeyFlags::empty().set_transport_encryption()).subkey(vc) {
         Ok(b) => match b.attach_cert() {
             Ok(c) => c,
             Err(_) => return FFIError::Failed as i32,
@@ -1844,7 +1864,8 @@ pub unsafe extern "C" fn pgp_certificate_revoke_subkey(
     };
 
     let sig = match SubkeyRevocationBuilder::new()
-        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes) {
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes)
+    {
         Ok(b) => match b.build(&mut signer, &cert, subkey.key(), None) {
             Ok(sig) => sig,
             Err(_) => return FFIError::Failed as i32,
@@ -1934,11 +1955,7 @@ pub unsafe extern "C" fn pgp_certificate_certify_userid(
     user_id: *const libc::c_char,
     new_cert: *mut *mut Certificate,
 ) -> i32 {
-    if signing_cert.is_null()
-        || target_cert.is_null()
-        || user_id.is_null()
-        || new_cert.is_null()
-    {
+    if signing_cert.is_null() || target_cert.is_null() || user_id.is_null() || new_cert.is_null() {
         return FFIError::Null as i32;
     }
     *new_cert = ptr::null_mut();
@@ -2016,11 +2033,7 @@ pub unsafe extern "C" fn pgp_certificate_certify_userid_with_trust(
     trust_amount: u8,
     new_cert: *mut *mut Certificate,
 ) -> i32 {
-    if signing_cert.is_null()
-        || target_cert.is_null()
-        || user_id.is_null()
-        || new_cert.is_null()
-    {
+    if signing_cert.is_null() || target_cert.is_null() || user_id.is_null() || new_cert.is_null() {
         return FFIError::Null as i32;
     }
     *new_cert = ptr::null_mut();
@@ -2104,11 +2117,7 @@ pub unsafe extern "C" fn pgp_certificate_certify_userid_exportable(
     exportable: u8,
     new_cert: *mut *mut Certificate,
 ) -> i32 {
-    if signing_cert.is_null()
-        || target_cert.is_null()
-        || user_id.is_null()
-        || new_cert.is_null()
-    {
+    if signing_cert.is_null() || target_cert.is_null() || user_id.is_null() || new_cert.is_null() {
         return FFIError::Null as i32;
     }
     *new_cert = ptr::null_mut();
@@ -2190,11 +2199,7 @@ pub unsafe extern "C" fn pgp_certificate_revoke_userid_certification(
     message: *const libc::c_char,
     new_cert: *mut *mut Certificate,
 ) -> i32 {
-    if signing_cert.is_null()
-        || target_cert.is_null()
-        || user_id.is_null()
-        || new_cert.is_null()
-    {
+    if signing_cert.is_null() || target_cert.is_null() || user_id.is_null() || new_cert.is_null() {
         return FFIError::Null as i32;
     }
     *new_cert = ptr::null_mut();
@@ -2398,7 +2403,8 @@ pub unsafe extern "C" fn pgp_certificate_revoke_userid(
     };
 
     let sig = match UserIDRevocationBuilder::new()
-        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes) {
+        .set_reason_for_revocation(ReasonForRevocation::from(reason), message_bytes)
+    {
         Ok(b) => match b.build(&mut signer, &cert, target.userid(), None) {
             Ok(sig) => sig,
             Err(_) => return FFIError::Failed as i32,
@@ -2737,10 +2743,7 @@ pub unsafe extern "C" fn pgp_certificate_verify_userid_certification(
     user_id: *const libc::c_char,
     out_verified: *mut u8,
 ) -> i32 {
-    if target_cert.is_null()
-        || issuer_cert.is_null()
-        || user_id.is_null()
-        || out_verified.is_null()
+    if target_cert.is_null() || issuer_cert.is_null() || user_id.is_null() || out_verified.is_null()
     {
         return FFIError::Null as i32;
     }
@@ -3332,12 +3335,7 @@ pub unsafe extern "C" fn pgp_certificate_set_expiry(
     };
 
     // Build primary signer from the primary key's secret material.
-    let mut primary_signer = match sequoia_cert
-        .primary_key()
-        .key()
-        .clone()
-        .parts_into_secret()
-    {
+    let mut primary_signer = match sequoia_cert.primary_key().key().clone().parts_into_secret() {
         Ok(k) => match k.into_keypair() {
             Ok(kp) => kp,
             Err(_) => return FFIError::Failed as i32,
@@ -3349,7 +3347,10 @@ pub unsafe extern "C" fn pgp_certificate_set_expiry(
     let mut all_sigs: Vec<sequoia_openpgp::Packet> = Vec::new();
 
     // Primary key.
-    match vc.primary_key().set_expiration_time(&mut primary_signer, expiry) {
+    match vc
+        .primary_key()
+        .set_expiration_time(&mut primary_signer, expiry)
+    {
         Ok(sigs) => all_sigs.extend(sigs.into_iter().map(|s| s.into())),
         Err(_) => return FFIError::Failed as i32,
     }
@@ -3454,12 +3455,7 @@ pub unsafe extern "C" fn pgp_certificate_set_subkey_expiry(
         Err(_) => return FFIError::Failed as i32,
     };
 
-    let mut primary_signer = match sequoia_cert
-        .primary_key()
-        .key()
-        .clone()
-        .parts_into_secret()
-    {
+    let mut primary_signer = match sequoia_cert.primary_key().key().clone().parts_into_secret() {
         Ok(k) => match k.into_keypair() {
             Ok(kp) => kp,
             Err(_) => return FFIError::Failed as i32,
@@ -3492,8 +3488,10 @@ pub unsafe extern "C" fn pgp_certificate_set_subkey_expiry(
         }
     };
 
-    let packets: Vec<sequoia_openpgp::Packet> =
-        sigs.into_iter().map(sequoia_openpgp::Packet::from).collect();
+    let packets: Vec<sequoia_openpgp::Packet> = sigs
+        .into_iter()
+        .map(sequoia_openpgp::Packet::from)
+        .collect();
     let updated = match sequoia_cert.insert_packets(packets) {
         Ok((c, _)) => c,
         Err(_) => return FFIError::Failed as i32,
@@ -5773,8 +5771,10 @@ mod tests {
             let mut out = Vec::new();
             {
                 let message = Message::new(&mut out);
-                let mut armorer =
-                    Armorer::new(message).kind(armor::Kind::Message).build().unwrap();
+                let mut armorer = Armorer::new(message)
+                    .kind(armor::Kind::Message)
+                    .build()
+                    .unwrap();
                 armorer.write_all(&bytes).unwrap();
                 armorer.finalize().unwrap();
             }
@@ -5855,7 +5855,10 @@ mod tests {
                 ),
                 FFIError::Ok as i32
             );
-            assert_eq!(to_owned_c_string(recovered), "session key round trip payload");
+            assert_eq!(
+                to_owned_c_string(recovered),
+                "session key round trip payload"
+            );
 
             pgp_certificate_free(cert);
         }
@@ -6213,7 +6216,11 @@ mod tests {
             let cipher_c = CString::new(to_owned_c_string(cipher)).unwrap();
             let mut recovered: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_decrypt_string_symmetric(cipher_c.as_ptr(), passphrase.as_ptr(), &mut recovered),
+                pgp_decrypt_string_symmetric(
+                    cipher_c.as_ptr(),
+                    passphrase.as_ptr(),
+                    &mut recovered
+                ),
                 FFIError::Ok as i32
             );
             assert_eq!(to_owned_c_string(recovered), "symmetric rust test payload");
@@ -6440,8 +6447,12 @@ mod tests {
                 FFIError::Ok as i32
             );
             let listing_after_str = to_owned_c_string(listing_after);
-            let fields_after: Vec<&str> =
-                listing_after_str.lines().next().unwrap().split('\t').collect();
+            let fields_after: Vec<&str> = listing_after_str
+                .lines()
+                .next()
+                .unwrap()
+                .split('\t')
+                .collect();
             assert_eq!(fields_after[3], "1");
 
             pgp_certificate_free(cert);
@@ -6645,8 +6656,7 @@ mod tests {
                 FFIError::Ok as i32
             );
             let listing_str = to_owned_c_string(listing);
-            let fields: Vec<&str> =
-                listing_str.lines().next().unwrap().split('\t').collect();
+            let fields: Vec<&str> = listing_str.lines().next().unwrap().split('\t').collect();
             assert_eq!(fields[4], "0");
 
             pgp_certificate_free(cert);
@@ -6810,10 +6820,7 @@ mod tests {
             );
             assert_eq!(revoked, 1);
             assert_eq!(reason, u8::from(ReasonForRevocation::KeyCompromised));
-            assert_eq!(
-                CStr::from_ptr(message).to_str().unwrap(),
-                "key compromised"
-            );
+            assert_eq!(CStr::from_ptr(message).to_str().unwrap(), "key compromised");
 
             libc::free(message as *mut libc::c_void);
             pgp_certificate_free(cert);
@@ -6967,11 +6974,7 @@ mod tests {
             let mut new_cert: *mut Certificate = ptr::null_mut();
 
             assert_eq!(
-                pgp_certificate_apply_revocation_armored(
-                    ptr::null(),
-                    sig.as_ptr(),
-                    &mut new_cert,
-                ),
+                pgp_certificate_apply_revocation_armored(ptr::null(), sig.as_ptr(), &mut new_cert,),
                 FFIError::Null as i32
             );
             assert_eq!(
@@ -7008,7 +7011,11 @@ mod tests {
             let policy = StandardPolicy::new();
             let sequoia_cert = &*(&*revoked).0;
             let subkey = sequoia_cert.keys().subkeys().next().unwrap();
-            match subkey.with_policy(&policy, None).unwrap().revocation_status() {
+            match subkey
+                .with_policy(&policy, None)
+                .unwrap()
+                .revocation_status()
+            {
                 RevocationStatus::Revoked(sigs) => {
                     let (code, reason) = sigs[0].reason_for_revocation().unwrap();
                     assert_eq!(code, ReasonForRevocation::KeySuperseded);
@@ -7091,12 +7098,12 @@ mod tests {
                 .unwrap();
             let sig = ua
                 .certifications()
-                .find(|sig| {
-                    sig.issuer_fingerprints()
-                        .any(|fp| fp.to_hex() == alice_fp)
-                })
+                .find(|sig| sig.issuer_fingerprints().any(|fp| fp.to_hex() == alice_fp))
                 .expect("third-party certification from alice not found");
-            assert_eq!(sig.typ(), sequoia_openpgp::types::SignatureType::GenericCertification);
+            assert_eq!(
+                sig.typ(),
+                sequoia_openpgp::types::SignatureType::GenericCertification
+            );
 
             pgp_certificate_free(alice);
             pgp_certificate_free(bob);
@@ -7158,12 +7165,7 @@ mod tests {
             let mut certified: *mut Certificate = ptr::null_mut();
 
             assert_eq!(
-                pgp_certificate_certify_userid(
-                    ptr::null(),
-                    bob,
-                    user_id.as_ptr(),
-                    &mut certified
-                ),
+                pgp_certificate_certify_userid(ptr::null(), bob, user_id.as_ptr(), &mut certified),
                 FFIError::Null as i32
             );
             assert_eq!(
@@ -7180,12 +7182,7 @@ mod tests {
                 FFIError::Null as i32
             );
             assert_eq!(
-                pgp_certificate_certify_userid(
-                    alice,
-                    bob,
-                    user_id.as_ptr(),
-                    ptr::null_mut()
-                ),
+                pgp_certificate_certify_userid(alice, bob, user_id.as_ptr(), ptr::null_mut()),
                 FFIError::Null as i32
             );
 
@@ -7224,11 +7221,7 @@ mod tests {
 
             let mut listing: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_userid_certifications(
-                    certified,
-                    user_id.as_ptr(),
-                    &mut listing
-                ),
+                pgp_certificate_userid_certifications(certified, user_id.as_ptr(), &mut listing),
                 FFIError::Ok as i32
             );
             let listing_str = to_owned_c_string(listing);
@@ -7275,11 +7268,7 @@ mod tests {
             // reported as non-exportable.
             let mut listing: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_userid_certifications(
-                    certified,
-                    user_id.as_ptr(),
-                    &mut listing
-                ),
+                pgp_certificate_userid_certifications(certified, user_id.as_ptr(), &mut listing),
                 FFIError::Ok as i32
             );
             let listing_str = to_owned_c_string(listing);
@@ -7352,11 +7341,7 @@ mod tests {
             );
             let mut listing: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_userid_certifications(
-                    reimported,
-                    user_id.as_ptr(),
-                    &mut listing
-                ),
+                pgp_certificate_userid_certifications(reimported, user_id.as_ptr(), &mut listing),
                 FFIError::Ok as i32
             );
             assert_eq!(to_owned_c_string(listing).lines().count(), 1);
@@ -7788,13 +7773,7 @@ mod tests {
             let mut revoked: *mut Certificate = ptr::null_mut();
             let user_id = CString::new("userids-info-revoke@example.org").unwrap();
             assert_eq!(
-                pgp_certificate_revoke_userid(
-                    cert,
-                    user_id.as_ptr(),
-                    0,
-                    ptr::null(),
-                    &mut revoked,
-                ),
+                pgp_certificate_revoke_userid(cert, user_id.as_ptr(), 0, ptr::null(), &mut revoked,),
                 FFIError::Ok as i32
             );
 
@@ -8123,11 +8102,7 @@ mod tests {
 
             let mut listing: *mut libc::c_char = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_userid_certifications(
-                    certified,
-                    user_id.as_ptr(),
-                    &mut listing
-                ),
+                pgp_certificate_userid_certifications(certified, user_id.as_ptr(), &mut listing),
                 FFIError::Ok as i32
             );
             let listing_str = to_owned_c_string(listing);
@@ -8163,8 +8138,12 @@ mod tests {
                 FFIError::Ok as i32
             );
             let listing_after_str = to_owned_c_string(listing_after);
-            let fields_after: Vec<&str> =
-                listing_after_str.lines().next().unwrap().split('\t').collect();
+            let fields_after: Vec<&str> = listing_after_str
+                .lines()
+                .next()
+                .unwrap()
+                .split('\t')
+                .collect();
             assert_eq!(fields_after[0], alice_fp);
             assert_eq!(fields_after[1], "1"); // now revoked
 
@@ -8218,11 +8197,7 @@ mod tests {
             let mut listing: *mut libc::c_char = ptr::null_mut();
 
             assert_eq!(
-                pgp_certificate_userid_certifications(
-                    ptr::null(),
-                    user_id.as_ptr(),
-                    &mut listing
-                ),
+                pgp_certificate_userid_certifications(ptr::null(), user_id.as_ptr(), &mut listing),
                 FFIError::Null as i32
             );
             assert_eq!(
@@ -8230,11 +8205,7 @@ mod tests {
                 FFIError::Null as i32
             );
             assert_eq!(
-                pgp_certificate_userid_certifications(
-                    cert,
-                    user_id.as_ptr(),
-                    ptr::null_mut()
-                ),
+                pgp_certificate_userid_certifications(cert, user_id.as_ptr(), ptr::null_mut()),
                 FFIError::Null as i32
             );
 
@@ -8553,7 +8524,10 @@ mod tests {
             let cert = generate_cert("designated-revoker-fresh@example.org");
 
             let mut out: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_revocation_keys(cert, &mut out), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_revocation_keys(cert, &mut out),
+                FFIError::Ok as i32
+            );
             assert_eq!(to_owned_c_string(out), "");
 
             pgp_certificate_free(cert);
@@ -8567,7 +8541,10 @@ mod tests {
             let bob = generate_cert("designated-revoker-bob@example.org");
 
             let mut bob_fp: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_fingerprint(bob, &mut bob_fp), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_fingerprint(bob, &mut bob_fp),
+                FFIError::Ok as i32
+            );
             let bob_fp = to_owned_c_string(bob_fp);
 
             let mut updated: *mut Certificate = ptr::null_mut();
@@ -8578,12 +8555,18 @@ mod tests {
             assert!(!updated.is_null());
 
             let mut out: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_revocation_keys(updated, &mut out), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_revocation_keys(updated, &mut out),
+                FFIError::Ok as i32
+            );
             assert_eq!(to_owned_c_string(out), format!("{bob_fp}\t0"));
 
             // The source cert must be untouched.
             let mut alice_out: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_revocation_keys(alice, &mut alice_out), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_revocation_keys(alice, &mut alice_out),
+                FFIError::Ok as i32
+            );
             assert_eq!(to_owned_c_string(alice_out), "");
 
             pgp_certificate_free(alice);
@@ -8708,7 +8691,11 @@ mod tests {
 
             let mut revoked_cert: *mut Certificate = ptr::null_mut();
             assert_eq!(
-                pgp_certificate_apply_revocation_armored(alice, armored_c.as_ptr(), &mut revoked_cert),
+                pgp_certificate_apply_revocation_armored(
+                    alice,
+                    armored_c.as_ptr(),
+                    &mut revoked_cert
+                ),
                 FFIError::Ok as i32
             );
 
@@ -8804,7 +8791,10 @@ mod tests {
             // them so we can confirm the source cert is untouched below without
             // hardcoding those defaults.
             let mut before: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_preferences(cert, &mut before), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_preferences(cert, &mut before),
+                FFIError::Ok as i32
+            );
             let before = to_owned_c_string(before);
 
             let sym: [u8; 2] = [9, 7]; // AES256, AES128
@@ -8830,12 +8820,18 @@ mod tests {
             assert!(!updated.is_null());
 
             let mut out: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_preferences(updated, &mut out), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_preferences(updated, &mut out),
+                FFIError::Ok as i32
+            );
             assert_eq!(to_owned_c_string(out), "9,7\t8,2\t2\t1");
 
             // The source cert must be untouched.
             let mut source_out: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_preferences(cert, &mut source_out), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_preferences(cert, &mut source_out),
+                FFIError::Ok as i32
+            );
             assert_eq!(to_owned_c_string(source_out), before);
 
             pgp_certificate_free(cert);
@@ -8866,7 +8862,10 @@ mod tests {
             assert!(!updated.is_null());
 
             let mut out: *mut libc::c_char = ptr::null_mut();
-            assert_eq!(pgp_certificate_preferences(updated, &mut out), FFIError::Ok as i32);
+            assert_eq!(
+                pgp_certificate_preferences(updated, &mut out),
+                FFIError::Ok as i32
+            );
             assert_eq!(to_owned_c_string(out), "\t\t\t0");
 
             pgp_certificate_free(cert);
@@ -8965,8 +8964,7 @@ mod tests {
             assert!(encrypted_path.exists());
 
             let c_decrypted = CString::new(decrypted_path.to_str().unwrap()).unwrap();
-            let rc =
-                pgp_certificate_decrypt_file(cert, c_encrypted.as_ptr(), c_decrypted.as_ptr());
+            let rc = pgp_certificate_decrypt_file(cert, c_encrypted.as_ptr(), c_decrypted.as_ptr());
             assert_eq!(rc, FFIError::Ok as i32);
 
             let plaintext = std::fs::read(&decrypted_path).unwrap();
@@ -9122,14 +9120,21 @@ mod tests {
             assert!(encrypted_path.exists());
 
             let c_alice_out = CString::new(alice_out.to_str().unwrap()).unwrap();
-            let rc = pgp_certificate_decrypt_file(alice, c_encrypted.as_ptr(), c_alice_out.as_ptr());
+            let rc =
+                pgp_certificate_decrypt_file(alice, c_encrypted.as_ptr(), c_alice_out.as_ptr());
             assert_eq!(rc, FFIError::Ok as i32);
-            assert_eq!(std::fs::read(&alice_out).unwrap(), b"streamed to two recipients");
+            assert_eq!(
+                std::fs::read(&alice_out).unwrap(),
+                b"streamed to two recipients"
+            );
 
             let c_bob_out = CString::new(bob_out.to_str().unwrap()).unwrap();
             let rc = pgp_certificate_decrypt_file(bob, c_encrypted.as_ptr(), c_bob_out.as_ptr());
             assert_eq!(rc, FFIError::Ok as i32);
-            assert_eq!(std::fs::read(&bob_out).unwrap(), b"streamed to two recipients");
+            assert_eq!(
+                std::fs::read(&bob_out).unwrap(),
+                b"streamed to two recipients"
+            );
 
             pgp_certificate_free(alice);
             pgp_certificate_free(bob);

@@ -11,6 +11,14 @@
 typedef struct Certificate Certificate;
 
 /**
+ * Free a string or byte buffer returned through an `out` parameter.
+ *
+ * # Safety
+ * `ptr` must be null or a buffer this library allocated, freed at most once.
+ */
+void pgp_free(void *ptr);
+
+/**
  * # Safety
  * `cert` must be non-null and from a `pgp_certificate_*` constructor.
  */
