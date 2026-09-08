@@ -35,8 +35,8 @@ void main() {
 }
 ```
 
-The package intentionally exposes common certificate and message workflows, not
-the full OpenPGP packet/keyserver surface:
+The package supports these certificate and message operations. Low-level
+packet editing and keyserver operations are outside its scope:
 
 - generate certificates with encryption and signing subkeys, optionally with
   an expiration or a passphrase-locked secret key
