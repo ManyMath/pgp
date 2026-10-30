@@ -1,0 +1,15 @@
+[graph]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+no-default-features = true
+features = ["crypto-cng"]
+exclude-dev = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2026-0387", reason = "cx448 via sequoia-openpgp crypto-cng pulls crypto-bigint 0.5.5." },
+]

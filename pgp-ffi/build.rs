@@ -1,5 +1,13 @@
-// Regenerates pgp-ffi.h with `cargo build --features header`.
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    let vendor = std::env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default();
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if vendor == "apple" {
+        println!("cargo:rustc-link-arg-cdylib=-Wl,-x");
+    } else if os == "linux" || os == "android" {
+        println!("cargo:rustc-link-arg-cdylib=-Wl,--strip-debug");
+    }
+
     #[cfg(feature = "header")]
     {
         let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
