@@ -7,9 +7,10 @@
   returns. Dart previously freed them with `calloc.free`, which is
   `CoTaskMemFree` on Windows and does not match libc `malloc`.
 
-- `pgp-ffi` now selects its crypto backend with the `crypto-rust` (default),
-  `crypto-openssl` and `crypto-nettle` features, and carries crates.io
-  metadata.
+- `pgp-ffi` now selects its crypto backend with the `crypto-openssl-vendored`
+  (default), `crypto-openssl`, `crypto-nettle` and `crypto-rust` features, and
+  carries crates.io metadata. The default tree no longer contains the
+  `crypto-bigint`, `ctutils` or `rsa` crates flagged by `cargo audit`.
 
 - Added `SessionKeyInfo.algorithm`, a typed `SymmetricAlgorithmPreference?`
   view of `SessionKeyInfo.algo` (the existing raw RFC 4880 algorithm code,

@@ -8,12 +8,12 @@ binary for you; build the crate first (see
 `pgp_flutter` package will build and bundle it via cargokit for Flutter apps.
 
 ## Status
-Development code, not for production use. The default native backend is
-Sequoia's pure-Rust crypto, which Sequoia marks experimental and
-variable-time, and the locked dependency tree has open timing advisories
-(`crypto-bigint`, and `rsa` RUSTSEC-2023-0071, which has no fix). Build
-`pgp-ffi` with the `crypto-openssl` or `crypto-nettle` feature instead; see
-[`pgp-ffi/README.md`](pgp-ffi/README.md). No release is published to pub.dev.
+Development code. The native library links a statically built OpenSSL by
+default; Sequoia's pure-Rust backend, which is experimental and variable-time
+with open timing advisories, is an opt-in `crypto-rust` feature for
+development. See [`pgp-ffi/README.md`](pgp-ffi/README.md). The package does not
+bundle the native library and is not published to pub.dev; Flutter apps should
+use a plugin that builds it.
 
 ## Getting started
 Add the package:
