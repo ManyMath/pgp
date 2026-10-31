@@ -6,16 +6,17 @@ The crypto backend is chosen with a cargo feature, one at a time:
 
 | Feature | Backend | Notes |
 |---|---|---|
-| `crypto-rust` (default) | RustCrypto | No system libraries. Sequoia marks it experimental and variable-time, so this crate enables `allow-experimental-crypto` and `allow-variable-time-crypto` for it. Development only. |
-| `crypto-openssl` | OpenSSL | Needs OpenSSL headers. |
-| `crypto-nettle` | Nettle | Needs `nettle-dev`. |
+| `crypto-openssl-vendored` (default) | OpenSSL, built from source and linked statically | Needs perl, make and a C compiler; no system OpenSSL. |
+| `crypto-openssl` | System OpenSSL (3.0.7+) | Needs OpenSSL headers. |
+| `crypto-nettle` | Nettle | Needs `nettle-dev`. Not tested here. |
+| `crypto-rust` | RustCrypto | Sequoia marks it experimental and variable-time, so this crate enables `allow-experimental-crypto` and `allow-variable-time-crypto` for it. Development only. |
 
-For example: `cargo build --release --no-default-features --features crypto-openssl`.
+For example: `cargo build --release --no-default-features --features crypto-rust`.
 
-`cargo audit` currently reports RUSTSEC-2026-0387 (`crypto-bigint`) and
-RUSTSEC-2023-0071 (`rsa`, no fix) against the `crypto-rust` tree.
-
-For the optional in-repo C smoke test (`test.c`), you'll need a C compiler (e.g., `gcc` or `clang`).
+The RustCrypto crates are not in the default dependency tree, which keeps
+RUSTSEC-2026-0387 (`crypto-bigint`), RUSTSEC-2026-0385 (`ctutils`) and
+RUSTSEC-2023-0071 (`rsa`, no fix) out of the shipped library. They remain in
+`Cargo.lock` for the `crypto-rust` feature.
 
 ## Development
 - Install `cbindgen`: `cargo install --force cbindgen`.

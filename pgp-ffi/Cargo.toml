@@ -22,19 +22,23 @@ path = "src/main.rs"
 [dependencies]
 sequoia-openpgp = { version = "2", default-features = false }
 libc = "0.2"
+openssl-sys = { version = "0.9", optional = true }
 anyhow = "1"
 
 [features]
-default = ["crypto-rust"]
+default = ["crypto-openssl-vendored"]
 # Pure Rust backend. Sequoia gates it behind the two allow-* features because
-# it is experimental and not constant-time. Prefer crypto-openssl or
-# crypto-nettle for anything beyond development.
+# it is experimental and not constant-time, and its dependency tree carries
+# open timing advisories. Development only; not the default.
 crypto-rust = [
     "sequoia-openpgp/crypto-rust",
     "sequoia-openpgp/allow-experimental-crypto",
     "sequoia-openpgp/allow-variable-time-crypto",
 ]
 crypto-openssl = ["sequoia-openpgp/crypto-openssl"]
+# OpenSSL built from source and linked statically, for targets with no system
+# OpenSSL (Windows, Android, iOS, macOS). Needs perl, make and a C compiler.
+crypto-openssl-vendored = ["crypto-openssl", "dep:openssl-sys", "openssl-sys/vendored"]
 crypto-nettle = ["sequoia-openpgp/crypto-nettle"]
 
 [build-dependencies]
