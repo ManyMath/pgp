@@ -1062,6 +1062,39 @@ int main(void) {
   pgp_free(pt_ex);
   pgp_free(fp_ex);
   pgp_free(signed_ex);
+
+  const uint8_t bin_payload[] = {0x00, 0x41, 0x00, 0x7f, 0xff};
+  char *bin_sig = NULL;
+  rc = pgp_certificate_sign_detached_bytes(ex_cert, bin_payload,
+                                           sizeof(bin_payload), &bin_sig);
+  if (rc != 0 || bin_sig == NULL) {
+    fprintf(stderr, "pgp_certificate_sign_detached_bytes failed: rc=%" PRId32
+                     "\n",
+            rc);
+    pgp_certificate_free(ex_cert);
+    pgp_free(armored);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  char *bin_fp = NULL;
+  int64_t bin_ts = 0;
+  uint8_t bin_hash = 0;
+  rc = pgp_certificate_verify_detached_bytes(
+      ex_cert, bin_payload, sizeof(bin_payload), (const uint8_t *)bin_sig,
+      strlen(bin_sig), 0, &bin_fp, &bin_ts, &bin_hash);
+  if (rc != 0 || bin_fp == NULL || bin_ts <= 0 || bin_hash == 0) {
+    fprintf(stderr,
+            "pgp_certificate_verify_detached_bytes failed: rc=%" PRId32 "\n",
+            rc);
+    if (bin_fp != NULL) pgp_free(bin_fp);
+    pgp_free(bin_sig);
+    pgp_certificate_free(ex_cert);
+    pgp_free(armored);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  pgp_free(bin_fp);
+  pgp_free(bin_sig);
   pgp_certificate_free(ex_cert);
 
   printf("%s\n", armored);

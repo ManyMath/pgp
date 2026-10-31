@@ -3383,6 +3383,115 @@ pub unsafe extern "C" fn pgp_certificate_verify_detached(
     )
 }
 
+unsafe fn select_signing_keypair(
+    cert: &SequoiaCert,
+) -> std::result::Result<sequoia_openpgp::crypto::KeyPair, i32> {
+    let policy = &StandardPolicy::new();
+    let key = match cert
+        .keys()
+        .unencrypted_secret()
+        .with_policy(policy, None)
+        .supported()
+        .alive()
+        .revoked(false)
+        .for_signing()
+        .next()
+    {
+        Some(key) => key.key().clone(),
+        None => {
+            set_last_error("Certificate has no unencrypted signing key");
+            return Err(FFIError::NotFound as i32);
+        }
+    };
+    key.into_keypair()
+        .map_err(|e| fail_with(FFIError::Failed, e))
+}
+
+fn write_detached_signature<W: Write + Send + Sync>(
+    keypair: sequoia_openpgp::crypto::KeyPair,
+    mut reader: impl Read,
+    sink: W,
+) -> std::result::Result<(), i32> {
+    let message = Message::new(sink);
+    let message = Armorer::new(message)
+        .kind(armor::Kind::Signature)
+        .build()
+        .map_err(|e| fail_with(FFIError::Failed, e))?;
+    let signer = Signer::new(message, keypair).map_err(|e| fail_with(FFIError::Failed, e))?;
+    let mut message = signer
+        .detached()
+        .build()
+        .map_err(|e| fail_with(FFIError::Failed, e))?;
+    std::io::copy(&mut reader, &mut message).map_err(|e| fail_with(FFIError::Failed, e))?;
+    message
+        .finalize()
+        .map_err(|e| fail_with(FFIError::Failed, e))
+}
+
+unsafe fn verify_detached_slice(
+    cert: *const Certificate,
+    sig_bytes: &[u8],
+    at_epoch: i64,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+    verify: impl FnOnce(
+        &mut sequoia_openpgp::parse::stream::DetachedVerifier<'_, VerifyHelper<'_>>,
+    ) -> Result<()>,
+) -> i32 {
+    if !signer_fingerprint.is_null() {
+        *signer_fingerprint = ptr::null_mut();
+    }
+    if !signature_creation_epoch.is_null() {
+        *signature_creation_epoch = 0;
+    }
+    if !hash_algo_out.is_null() {
+        *hash_algo_out = 0;
+    }
+    if sig_bytes.is_empty() {
+        set_last_error("Empty detached signature");
+        return FFIError::Invalid as i32;
+    }
+
+    let cert = match borrow_cert(cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let at = match reference_time_from_epoch(at_epoch) {
+        Ok(t) => t,
+        Err(code) => return code,
+    };
+
+    let policy = &StandardPolicy::new();
+    let helper = VerifyHelper {
+        cert,
+        signer_fp: None,
+        signature_creation_epoch: None,
+        hash_algo: None,
+    };
+    let mut verifier = match DetachedVerifierBuilder::from_bytes(sig_bytes) {
+        Ok(b) => match b.with_policy(policy, at, helper) {
+            Ok(v) => v,
+            Err(e) => return fail_with(FFIError::Failed, e),
+        },
+        Err(e) => return fail_with(FFIError::Invalid, e),
+    };
+
+    if let Err(e) = verify(&mut verifier) {
+        return fail_with(FFIError::Failed, e);
+    }
+
+    let helper = verifier.into_helper();
+    write_verify_metadata(
+        helper.signer_fp.as_deref(),
+        helper.signature_creation_epoch,
+        helper.hash_algo,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    )
+}
+
 /// Like `pgp_certificate_verify_detached`, with an explicit reference time
 /// `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
 ///
@@ -3405,54 +3514,195 @@ pub unsafe extern "C" fn pgp_certificate_verify_detached_ex(
         set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
-    if !signer_fingerprint.is_null() {
-        *signer_fingerprint = ptr::null_mut();
+    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
+    let sig_bytes = CStr::from_ptr(armored_sig).to_bytes();
+    verify_detached_slice(
+        cert,
+        sig_bytes,
+        at_epoch,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+        |verifier| verifier.verify_bytes(plaintext_bytes),
+    )
+}
+
+/// Sign raw `data` (`len` bytes) with `cert`, writing an ASCII-armored detached
+/// signature to `*armored_sig`. Caller must free `*armored_sig` with `pgp_free()`.
+///
+/// # Safety
+/// `cert` and `armored_sig` must be non-null; `data` must point to at least
+/// `len` valid bytes when `len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_sign_detached_bytes(
+    cert: *const Certificate,
+    data: *const u8,
+    len: usize,
+    armored_sig: *mut *mut libc::c_char,
+) -> i32 {
+    clear_last_error();
+    if cert.is_null() || armored_sig.is_null() || (data.is_null() && len > 0) {
+        set_last_error("Null pointer argument");
+        return FFIError::Null as i32;
     }
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = 0;
+    *armored_sig = ptr::null_mut();
+
+    let cert = match borrow_cert(cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let keypair = match select_signing_keypair(cert) {
+        Ok(kp) => kp,
+        Err(code) => return code,
+    };
+    let data_bytes: &[u8] = if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data, len)
+    };
+
+    let mut out = Vec::new();
+    if let Err(code) = write_detached_signature(keypair, Cursor::new(data_bytes), &mut out) {
+        return code;
     }
-    if !hash_algo_out.is_null() {
-        *hash_algo_out = 0;
+    let sig = match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(e) => return fail_with(FFIError::Failed, e),
+    };
+    write_c_string(&sig, armored_sig)
+}
+
+/// Stream `input_path` and write an ASCII-armored detached signature to
+/// `output_sig_path`. Removes any partial output file on failure.
+///
+/// # Safety
+/// `cert`, `input_path`, and `output_sig_path` must be non-null UTF-8 paths.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_sign_detached_file(
+    cert: *const Certificate,
+    input_path: *const libc::c_char,
+    output_sig_path: *const libc::c_char,
+) -> i32 {
+    clear_last_error();
+    if cert.is_null() || input_path.is_null() || output_sig_path.is_null() {
+        set_last_error("Null pointer argument");
+        return FFIError::Null as i32;
     }
 
     let cert = match borrow_cert(cert) {
         Ok(c) => c,
         Err(code) => return code,
     };
-    let at = match reference_time_from_epoch(at_epoch) {
-        Ok(t) => t,
+    let input_path = match path_str(input_path) {
+        Ok(s) => s,
         Err(code) => return code,
     };
-    let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
-    let sig_bytes = CStr::from_ptr(armored_sig).to_bytes();
-
-    let policy = &StandardPolicy::new();
-    let helper = VerifyHelper {
-        cert,
-        signer_fp: None,
-        signature_creation_epoch: None,
-        hash_algo: None,
+    let output_sig_path = match path_str(output_sig_path) {
+        Ok(s) => s,
+        Err(code) => return code,
     };
-    let mut verifier = match DetachedVerifierBuilder::from_bytes(sig_bytes) {
-        Ok(b) => match b.with_policy(policy, at, helper) {
-            Ok(v) => v,
-            Err(e) => return fail_with(FFIError::Failed, e),
-        },
-        Err(e) => return fail_with(FFIError::Invalid, e),
+    let keypair = match select_signing_keypair(cert) {
+        Ok(kp) => kp,
+        Err(code) => return code,
+    };
+    let input = match File::open(input_path) {
+        Ok(f) => f,
+        Err(e) => return fail_with(FFIError::NotFound, e),
+    };
+    let output = match File::create(output_sig_path) {
+        Ok(f) => f,
+        Err(e) => return fail_with(FFIError::Failed, e),
     };
 
-    if let Err(e) = verifier.verify_bytes(plaintext_bytes) {
-        return fail_with(FFIError::Failed, e);
+    if let Err(code) = write_detached_signature(keypair, input, BufWriter::new(output)) {
+        remove_partial_output(output_sig_path);
+        return code;
     }
+    FFIError::Ok as i32
+}
 
-    let helper = verifier.into_helper();
-    write_verify_metadata(
-        helper.signer_fp.as_deref(),
-        helper.signature_creation_epoch,
-        helper.hash_algo,
+/// Verify a detached signature `sig` (`sig_len` bytes, ASCII-armored or raw
+/// binary OpenPGP signature packet) against raw `data` (`data_len` bytes).
+///
+/// # Safety
+/// `cert` and `sig` must be non-null; `sig` must point to `sig_len` bytes, and
+/// `data` must point to `data_len` bytes when `data_len > 0`.
+/// `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+/// be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_detached_bytes(
+    cert: *const Certificate,
+    data: *const u8,
+    data_len: usize,
+    sig: *const u8,
+    sig_len: usize,
+    at_epoch: i64,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
+    if cert.is_null() || sig.is_null() || (data.is_null() && data_len > 0) {
+        set_last_error("Null pointer argument");
+        return FFIError::Null as i32;
+    }
+    let data_bytes: &[u8] = if data_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data, data_len)
+    };
+    let sig_bytes = std::slice::from_raw_parts(sig, sig_len);
+    verify_detached_slice(
+        cert,
+        sig_bytes,
+        at_epoch,
         signer_fingerprint,
         signature_creation_epoch,
         hash_algo_out,
+        |verifier| verifier.verify_bytes(data_bytes),
+    )
+}
+
+/// Stream `file_path` and verify it against detached signature `sig` (`sig_len`
+/// bytes, ASCII-armored or raw binary OpenPGP signature packet).
+///
+/// # Safety
+/// `cert`, `file_path`, and `sig` must be non-null; `sig` must point to
+/// `sig_len` valid bytes. `signer_fingerprint`, `signature_creation_epoch`,
+/// and `hash_algo_out` may be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_detached_file(
+    cert: *const Certificate,
+    file_path: *const libc::c_char,
+    sig: *const u8,
+    sig_len: usize,
+    at_epoch: i64,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
+    if cert.is_null() || file_path.is_null() || sig.is_null() {
+        set_last_error("Null pointer argument");
+        return FFIError::Null as i32;
+    }
+    let path = match path_str(file_path) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    let sig_bytes = std::slice::from_raw_parts(sig, sig_len);
+    match File::open(path) {
+        Ok(f) => drop(f),
+        Err(e) => return fail_with(FFIError::NotFound, e),
+    }
+    verify_detached_slice(
+        cert,
+        sig_bytes,
+        at_epoch,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+        |verifier| verifier.verify_file(path),
     )
 }
 
@@ -9770,6 +10020,186 @@ mod tests {
             libc::free(signed as *mut libc::c_void);
             pgp_certificate_free(expiring);
             pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn sign_and_verify_detached_bytes_handles_nul_bytes_and_raw_binary_sig() {
+        unsafe {
+            let cert = generate_cert("detached-bytes@example.org");
+            let payload: Vec<u8> = vec![0x00, 0x01, 0x02, 0x00, 0xff, 0xfe, 0x42, 0x00];
+
+            let mut armored_sig: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_detached_bytes(
+                    cert,
+                    payload.as_ptr(),
+                    payload.len(),
+                    &mut armored_sig,
+                ),
+                FFIError::Ok as i32
+            );
+            let sig_str = to_owned_c_string(armored_sig);
+
+            let mut fp: *mut libc::c_char = ptr::null_mut();
+            let mut signed_at: i64 = 0;
+            let mut hash_algo: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_detached_bytes(
+                    cert,
+                    payload.as_ptr(),
+                    payload.len(),
+                    sig_str.as_ptr(),
+                    sig_str.len(),
+                    0,
+                    &mut fp,
+                    &mut signed_at,
+                    &mut hash_algo,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(fp).len(), 40);
+            assert!(signed_at > 0);
+            assert_ne!(hash_algo, 0);
+
+            // Tampered byte must fail.
+            let mut tampered = payload.clone();
+            tampered[4] ^= 0xff;
+            assert_eq!(
+                pgp_certificate_verify_detached_bytes(
+                    cert,
+                    tampered.as_ptr(),
+                    tampered.len(),
+                    sig_str.as_ptr(),
+                    sig_str.len(),
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Failed as i32
+            );
+
+            // Empty payload is supported.
+            let mut empty_sig: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_detached_bytes(cert, ptr::null(), 0, &mut empty_sig),
+                FFIError::Ok as i32
+            );
+            let empty_sig_str = to_owned_c_string(empty_sig);
+            assert_eq!(
+                pgp_certificate_verify_detached_bytes(
+                    cert,
+                    ptr::null(),
+                    0,
+                    empty_sig_str.as_ptr(),
+                    empty_sig_str.len(),
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Ok as i32
+            );
+
+            // Unarmored raw OpenPGP binary signature packet is also accepted.
+            let dearmored = armor::Reader::from_bytes(
+                sig_str.as_bytes(),
+                armor::ReaderMode::Tolerant(Some(armor::Kind::Signature)),
+            );
+            let mut raw_sig = Vec::new();
+            std::io::Read::read_to_end(&mut Box::new(dearmored), &mut raw_sig).unwrap();
+            assert_eq!(
+                pgp_certificate_verify_detached_bytes(
+                    cert,
+                    payload.as_ptr(),
+                    payload.len(),
+                    raw_sig.as_ptr(),
+                    raw_sig.len(),
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Ok as i32
+            );
+
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn sign_and_verify_detached_file_round_trip_and_missing_file() {
+        unsafe {
+            let cert = generate_cert("detached-file@example.org");
+            let data_path = unique_temp_path("detached-bin.dat");
+            let sig_path = unique_temp_path("detached-bin.asc");
+            let payload: Vec<u8> = (0..4096).map(|i| ((i * 31) % 256) as u8).collect();
+            std::fs::write(&data_path, &payload).unwrap();
+
+            let c_data = CString::new(data_path.to_str().unwrap()).unwrap();
+            let c_sig = CString::new(sig_path.to_str().unwrap()).unwrap();
+            assert_eq!(
+                pgp_certificate_sign_detached_file(cert, c_data.as_ptr(), c_sig.as_ptr()),
+                FFIError::Ok as i32
+            );
+            let sig_bytes = std::fs::read(&sig_path).unwrap();
+
+            let mut fp: *mut libc::c_char = ptr::null_mut();
+            let mut signed_at: i64 = 0;
+            let mut hash_algo: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_detached_file(
+                    cert,
+                    c_data.as_ptr(),
+                    sig_bytes.as_ptr(),
+                    sig_bytes.len(),
+                    0,
+                    &mut fp,
+                    &mut signed_at,
+                    &mut hash_algo,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(fp).len(), 40);
+            assert!(signed_at > 0);
+            assert_ne!(hash_algo, 0);
+
+            // Nonexistent file returns NotFound.
+            let missing_path = unique_temp_path("detached-missing.dat");
+            let c_missing = CString::new(missing_path.to_str().unwrap()).unwrap();
+            assert_eq!(
+                pgp_certificate_verify_detached_file(
+                    cert,
+                    c_missing.as_ptr(),
+                    sig_bytes.as_ptr(),
+                    sig_bytes.len(),
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::NotFound as i32
+            );
+
+            // Past at_epoch before signature creation fails.
+            assert_eq!(
+                pgp_certificate_verify_detached_file(
+                    cert,
+                    c_data.as_ptr(),
+                    sig_bytes.as_ptr(),
+                    sig_bytes.len(),
+                    signed_at - 3600,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Failed as i32
+            );
+
+            pgp_certificate_free(cert);
+            let _ = std::fs::remove_file(&data_path);
+            let _ = std::fs::remove_file(&sig_path);
         }
     }
 }
