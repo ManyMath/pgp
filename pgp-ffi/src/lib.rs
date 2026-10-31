@@ -280,6 +280,15 @@ impl DecryptionHelper for RawSessionKeyHelper {
     }
 }
 
+/// Free a string or byte buffer returned through an `out` parameter.
+///
+/// # Safety
+/// `ptr` must be null or a buffer this library allocated, freed at most once.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_free(ptr: *mut libc::c_void) {
+    libc::free(ptr);
+}
+
 /// # Safety
 /// `cert` must be non-null and from a `pgp_certificate_*` constructor.
 #[no_mangle]
@@ -5302,6 +5311,16 @@ mod tests {
     }
 
     // --- null-pointer handling ---
+
+    #[test]
+    fn pgp_free_accepts_null_and_output_buffers() {
+        unsafe {
+            pgp_free(ptr::null_mut());
+            let mut out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(write_c_string("x", &mut out), 0);
+            pgp_free(out.cast());
+        }
+    }
 
     #[test]
     fn certificate_free_accepts_null() {

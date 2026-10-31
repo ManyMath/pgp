@@ -25,6 +25,24 @@ class PgpFfiBindings {
           lookup)
       : _lookup = lookup;
 
+  /// Free a string or byte buffer returned through an `out` parameter.
+  ///
+  /// # Safety
+  /// `ptr` must be null or a buffer this library allocated, freed at most once.
+  void pgp_free(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _pgp_free(
+      ptr,
+    );
+  }
+
+  late final _pgp_freePtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+          'pgp_free');
+  late final _pgp_free =
+      _pgp_freePtr.asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
   /// # Safety
   /// `cert` must be non-null and from a `pgp_certificate_*` constructor.
   void pgp_certificate_free(

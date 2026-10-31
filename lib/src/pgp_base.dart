@@ -549,7 +549,7 @@ class Certificate {
       );
       if (code != 0) throw PgpException(code);
       final hex = hexOut.value.cast<Utf8>().toDartString();
-      calloc.free(hexOut.value);
+      _bindings.pgp_free(hexOut.value.cast());
       return SessionKeyInfo(hex: hex, algo: algoOut.value);
     } finally {
       calloc.free(msgPtr);
@@ -589,8 +589,8 @@ class Certificate {
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      calloc.free(plaintextOut.value);
-      calloc.free(fpOut.value);
+      _bindings.pgp_free(plaintextOut.value.cast());
+      _bindings.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -612,7 +612,7 @@ class Certificate {
       final code = call(_ptr, out);
       if (code != 0) throw PgpException(code);
       final armored = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value); // Allocated by pgp-ffi with malloc.
+      _bindings.pgp_free(out.value.cast());
       return armored;
     } finally {
       calloc.free(out);
@@ -633,7 +633,7 @@ class Certificate {
       final code = call(_ptr, inputPointer.cast(), out);
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value); // Allocated by pgp-ffi with malloc.
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(inputPointer);
@@ -676,7 +676,7 @@ class Certificate {
       );
       if (code != 0) throw PgpException(code);
       final message = messageOut.value.cast<Utf8>().toDartString();
-      calloc.free(messageOut.value);
+      _bindings.pgp_free(messageOut.value.cast());
       return RevocationInfo(
         isRevoked: revokedOut.value == 1,
         reasonCode: reasonOut.value,
@@ -711,7 +711,7 @@ class Certificate {
       );
       if (code != 0) throw PgpException(code);
       final armored = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return armored;
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
@@ -727,8 +727,9 @@ class Certificate {
   Certificate applyRevocationArmored(String revocationArmored) {
     final armoredPointer = revocationArmored.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_apply_revocation_armored(
-          _ptr, armoredPointer.cast(), out));
+      return _derive((out) =>
+          _bindings.pgp_certificate_apply_revocation_armored(
+              _ptr, armoredPointer.cast(), out));
     } finally {
       calloc.free(armoredPointer);
     }
@@ -758,7 +759,7 @@ class Certificate {
       final code = _bindings.pgp_certificate_revocation_keys(_ptr, out);
       if (code != 0) throw PgpException(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -801,7 +802,7 @@ class Certificate {
       );
       if (code != 0) throw PgpException(code);
       final armored = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return armored;
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
@@ -894,7 +895,7 @@ class Certificate {
       final code = _bindings.pgp_certificate_preferences(_ptr, out);
       if (code != 0) throw PgpException(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       final fields = raw.split('\t');
       List<int> parseCsv(String s) =>
           s.isEmpty ? [] : s.split(',').map(int.parse).toList();
@@ -1014,14 +1015,9 @@ class Certificate {
   }) {
     final userIdPointer = userId.toNativeUtf8();
     try {
-      return _derive(
-          (out) => _bindings.pgp_certificate_certify_userid_with_trust(
-              _ptr,
-              target._ptr,
-              userIdPointer.cast(),
-              trustDepth,
-              trustAmount,
-              out));
+      return _derive((out) =>
+          _bindings.pgp_certificate_certify_userid_with_trust(_ptr, target._ptr,
+              userIdPointer.cast(), trustDepth, trustAmount, out));
     } finally {
       calloc.free(userIdPointer);
     }
@@ -1097,13 +1093,9 @@ class Certificate {
   }) {
     final userIdPointer = userId.toNativeUtf8();
     try {
-      return _derive(
-          (out) => _bindings.pgp_certificate_certify_userid_exportable(
-              _ptr,
-              target._ptr,
-              userIdPointer.cast(),
-              exportable ? 1 : 0,
-              out));
+      return _derive((out) =>
+          _bindings.pgp_certificate_certify_userid_exportable(_ptr, target._ptr,
+              userIdPointer.cast(), exportable ? 1 : 0, out));
     } finally {
       calloc.free(userIdPointer);
     }
@@ -1133,7 +1125,7 @@ class Certificate {
       final code = _bindings.pgp_certificate_fingerprint(_ptr, out);
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(out);
@@ -1147,7 +1139,7 @@ class Certificate {
       final code = _bindings.pgp_certificate_userids(_ptr, out);
       if (code != 0) throw PgpException(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return raw.isEmpty ? [] : raw.split('\n');
     } finally {
       calloc.free(out);
@@ -1163,7 +1155,7 @@ class Certificate {
       final code = _bindings.pgp_certificate_userids_info(_ptr, out);
       if (code != 0) throw PgpException(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -1194,7 +1186,7 @@ class Certificate {
           _ptr, userIdPointer.cast(), out);
       if (code != 0) throw PgpException(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -1244,7 +1236,7 @@ class Certificate {
       final code = _bindings.pgp_certificate_subkeys(_ptr, out);
       if (code != 0) throw PgpException(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -1324,7 +1316,7 @@ class Certificate {
           _ptr, p1.cast(), p2.cast(), fpOut, nullptr);
       if (code != 0) throw PgpException(code);
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      calloc.free(fpOut.value);
+      _bindings.pgp_free(fpOut.value.cast());
       return fp;
     } finally {
       calloc.free(p1);
@@ -1408,7 +1400,7 @@ class Certificate {
           _ptr, dataPtr.cast(), data.length, out);
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(dataPtr);
@@ -1428,7 +1420,7 @@ class Certificate {
       if (code != 0) throw PgpException(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
-      calloc.free(outPtr.value);
+      _bindings.pgp_free(outPtr.value.cast());
       return result;
     } finally {
       calloc.free(msgPtr);
@@ -1450,7 +1442,7 @@ class Certificate {
           _ptr, dataPtr.cast(), data.length, out);
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(dataPtr);
@@ -1470,7 +1462,7 @@ class Certificate {
       if (code != 0) throw PgpException(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
-      calloc.free(outPtr.value);
+      _bindings.pgp_free(outPtr.value.cast());
       return result;
     } finally {
       calloc.free(msgPtr);
@@ -1493,9 +1485,9 @@ class Certificate {
       if (code != 0) throw PgpException(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
-      calloc.free(outPtr.value);
+      _bindings.pgp_free(outPtr.value.cast());
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      calloc.free(fpOut.value);
+      _bindings.pgp_free(fpOut.value.cast());
       return VerifiedBytes(
         plaintext: result,
         signerFingerprint: fp,
@@ -1544,8 +1536,8 @@ class Certificate {
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      calloc.free(plaintextOut.value);
-      calloc.free(fpOut.value);
+      _bindings.pgp_free(plaintextOut.value.cast());
+      _bindings.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -1581,8 +1573,8 @@ class Certificate {
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      calloc.free(plaintextOut.value);
-      calloc.free(fpOut.value);
+      _bindings.pgp_free(plaintextOut.value.cast());
+      _bindings.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -1625,7 +1617,7 @@ class Certificate {
       );
       if (code != 0) throw PgpException(code);
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      calloc.free(fpOut.value);
+      _bindings.pgp_free(fpOut.value.cast());
       return FileSignatureInfo(
         signerFingerprint: fp,
         signedAtEpoch: epochOut.value,
@@ -1651,7 +1643,7 @@ class Certificate {
           _ptr, ptPtr.cast(), ppPtr.cast(), out);
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(ptPtr);
@@ -1685,8 +1677,8 @@ class Certificate {
       if (code != 0) throw PgpException(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      calloc.free(plaintextOut.value);
-      calloc.free(fpOut.value);
+      _bindings.pgp_free(plaintextOut.value.cast());
+      _bindings.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -1735,7 +1727,7 @@ class PGP {
       final code = _bindings.pgp_message_recipient_key_ids(msgPtr.cast(), out);
       if (code != 0) throw PgpException(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return raw.isEmpty ? [] : raw.split('\n');
     } finally {
       calloc.free(msgPtr);
@@ -1764,7 +1756,7 @@ class PGP {
       );
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(hexPtr);
@@ -1797,7 +1789,7 @@ class PGP {
       );
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(certsArray);
@@ -1863,7 +1855,7 @@ class PGP {
       );
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(certsArray);
@@ -1900,7 +1892,7 @@ class PGP {
       );
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(certsArray);
@@ -1956,7 +1948,7 @@ class PGP {
           ptPtr.cast(), ppPtr.cast(), out);
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(ptPtr);
@@ -1978,7 +1970,7 @@ class PGP {
           msgPtr.cast(), ppPtr.cast(), out);
       if (code != 0) throw PgpException(code);
       final result = out.value.cast<Utf8>().toDartString();
-      calloc.free(out.value);
+      _bindings.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(msgPtr);
@@ -2004,7 +1996,8 @@ class PGP {
   /// Generates a new certificate carrying [userId] using [cipherSuite]
   /// instead of the default [CipherSuite.cv25519]: e.g. to produce an RSA
   /// key for interoperating with a target that requires one.
-  Certificate generateKeyWithCipherSuite(String userId, CipherSuite cipherSuite) {
+  Certificate generateKeyWithCipherSuite(
+      String userId, CipherSuite cipherSuite) {
     final userIdPointer = userId.toNativeUtf8();
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
