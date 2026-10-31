@@ -5,6 +5,10 @@ edition = "2021"
 description = "OpenPGP and Sequoia FFI bindings"
 repository = "https://github.com/ManyMath/pgp-ffi"
 license = "MIT"
+readme = "README.md"
+keywords = ["openpgp", "pgp", "sequoia", "ffi"]
+categories = ["cryptography", "external-ffi-bindings"]
+exclude = ["test.c", "test_runner"]
 
 [lib]
 name = "pgp_ffi"
@@ -16,9 +20,22 @@ name = "pgp_ffi"
 path = "src/main.rs"
 
 [dependencies]
-sequoia-openpgp = { version = "2", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
+sequoia-openpgp = { version = "2", default-features = false }
 libc = "0.2"
 anyhow = "1"
+
+[features]
+default = ["crypto-rust"]
+# Pure Rust backend. Sequoia gates it behind the two allow-* features because
+# it is experimental and not constant-time. Prefer crypto-openssl or
+# crypto-nettle for anything beyond development.
+crypto-rust = [
+    "sequoia-openpgp/crypto-rust",
+    "sequoia-openpgp/allow-experimental-crypto",
+    "sequoia-openpgp/allow-variable-time-crypto",
+]
+crypto-openssl = ["sequoia-openpgp/crypto-openssl"]
+crypto-nettle = ["sequoia-openpgp/crypto-nettle"]
 
 [build-dependencies]
 cbindgen = "0.27.0"
