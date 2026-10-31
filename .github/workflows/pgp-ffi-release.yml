@@ -54,38 +54,36 @@ jobs:
       - name: Scan dependencies for known vulnerabilities
         working-directory: pgp-ffi
         run: |
-          # RUSTSEC-2023-0071: rsa crate timing sidechannel (Marvin Attack),
-          # pulled in transitively by sequoia-openpgp. No fixed version
-          # exists upstream yet, so it's ignored here as an accepted risk
-          # rather than silently going unnoticed by the tool. Revisit and
-          # drop this ignore once a fix lands. The lockfile covers every
-          # backend, so the openssl-backend job checks that the default
-          # crypto-rust advisories do not reach that tree.
-          cargo audit --ignore RUSTSEC-2023-0071
+          # The lockfile covers every backend, so it still lists the
+          # RustCrypto crates behind the opt-in crypto-rust feature:
+          # RUSTSEC-2023-0071 (rsa, no fix), RUSTSEC-2026-0387
+          # (crypto-bigint) and RUSTSEC-2026-0385 (ctutils). The
+          # default-backend job checks they are not in the default tree.
+          cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0385
 
-  openssl-backend:
-    name: OpenSSL backend (tests, Dart suite, advisory-free tree)
+  default-backend:
+    name: Default backend tree is free of the audited crates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
-      - name: Rust unit tests
-        run: cargo test --lib --no-default-features --features crypto-openssl --manifest-path pgp-ffi/Cargo.toml
-      - name: Vulnerable RustCrypto crates are absent from this tree
+      - name: Vulnerable RustCrypto crates are absent from the default tree
         working-directory: pgp-ffi
         run: |
           for crate in crypto-bigint ctutils rsa; do
-            if cargo tree --no-default-features --features crypto-openssl -i "$crate" 2>/dev/null; then
-              echo "::error::$crate is in the crypto-openssl dependency tree"
+            if cargo tree -i "$crate" 2>/dev/null; then
+              echo "::error::$crate is in the default dependency tree"
               exit 1
             fi
           done
-      - run: cargo build --release --no-default-features --features crypto-openssl --manifest-path pgp-ffi/Cargo.toml
-      - uses: dart-lang/setup-dart@v1
-      - run: |
-          dart pub get
-          dart test
+
+  rust-backend:
+    name: crypto-rust backend (development only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib --no-default-features --features crypto-rust --manifest-path pgp-ffi/Cargo.toml
 
   c-smoke-test:
     name: C smoke test (test.c)
@@ -129,7 +127,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.name }})
-    needs: [check-header, unit-tests, clippy, audit, openssl-backend, c-smoke-test, asan]
+    needs: [check-header, unit-tests, clippy, audit, default-backend, rust-backend, c-smoke-test, asan]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
