@@ -7,14 +7,22 @@ binary for you; build the crate first (see
 [Building the native library](#building-the-native-library)). A separate
 `pgp_flutter` package will build and bundle it via cargokit for Flutter apps.
 
+## Status
+Development code, not for production use. The default native backend is
+Sequoia's pure-Rust crypto, which Sequoia marks experimental and
+variable-time, and the locked dependency tree has open timing advisories
+(`crypto-bigint`, and `rsa` RUSTSEC-2023-0071, which has no fix). Build
+`pgp-ffi` with the `crypto-openssl` or `crypto-nettle` feature instead; see
+[`pgp-ffi/README.md`](pgp-ffi/README.md). No release is published to pub.dev.
+
 ## Getting started
 Add the package:
 ```sh
 dart pub add pgp
 ```
 
-Generate a certificate, share its public key, encrypt/decrypt, sign/verify, and
-export the secret key for storage:
+Generate a certificate, share its public key, encrypt/decrypt, and
+sign/verify:
 ```dart
 import 'package:pgp/pgp.dart';
 
@@ -29,7 +37,6 @@ void main() {
   final signed = cert.sign('hello');
   print(publicCert.verify(signed));
 
-  print(cert.exportSecretArmored());
   publicCert.dispose();
   cert.dispose();
 }

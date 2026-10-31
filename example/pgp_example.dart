@@ -85,7 +85,8 @@ void main() {
   alice = _replace(alice, bob.certifyUserId(alice, 'alice@example.org'));
   final certifiers = alice.userIdCertifications('alice@example.org');
   print('certified by: ${certifiers.map((c) => c.fingerprint)}');
-  print('genuine: ${alice.verifyUserIdCertification(bob, 'alice@example.org')}');
+  print(
+      'genuine: ${alice.verifyUserIdCertification(bob, 'alice@example.org')}');
   alice = _replace(
       alice, bob.revokeUserIdCertification(alice, 'alice@example.org'));
   bob.dispose();
@@ -135,7 +136,6 @@ void main() {
   cert = _replace(cert, cert.revokeSubkey(0));
   cert = _replace(cert, cert.revoke());
 
-  print(cert.exportSecretArmored());
   cert.dispose();
 }
 

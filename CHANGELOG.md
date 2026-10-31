@@ -1,5 +1,16 @@
 ## Unreleased
 
+- Removed secret-key export printing from the README quickstart and example,
+  and added a status note: development code, no pub.dev release.
+
+- Added `pgp_free` to `pgp-ffi` and used it for every buffer the library
+  returns. Dart previously freed them with `calloc.free`, which is
+  `CoTaskMemFree` on Windows and does not match libc `malloc`.
+
+- `pgp-ffi` now selects its crypto backend with the `crypto-rust` (default),
+  `crypto-openssl` and `crypto-nettle` features, and carries crates.io
+  metadata.
+
 - Added `SessionKeyInfo.algorithm`, a typed `SymmetricAlgorithmPreference?`
   view of `SessionKeyInfo.algo` (the existing raw RFC 4880 algorithm code,
   left unchanged), matching every other algorithm-code field in the package
