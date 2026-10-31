@@ -2,6 +2,7 @@ name: pgp
 description: OpenPGP and Sequoia bindings for Dart.
 version: 0.0.1-dev.9
 repository: https://github.com/ManyMath/pgp-dart
+publish_to: none # development code, see README status
 
 environment:
   sdk: ^3.6.0-0
