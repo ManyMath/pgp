@@ -11,6 +11,16 @@
 typedef struct Certificate Certificate;
 
 /**
+ * Write the last error message recorded on the current thread to `*out`.
+ * Returns an empty string if no error is recorded. Does not clear the stored
+ * message. Caller must free `*out` with `pgp_free()`.
+ *
+ * # Safety
+ * `out` must be non-null.
+ */
+int32_t pgp_last_error_message(char **out);
+
+/**
  * Free a string or byte buffer returned through an `out` parameter.
  *
  * # Safety
@@ -177,25 +187,36 @@ int32_t pgp_certificate_sign_string(const struct Certificate *cert,
 /**
  * Verify an ASCII-armored signed message using the certificate and write the
  * verified plaintext to `*plaintext`. Caller must free `*plaintext` with
- * `free()`.
- *
- * If `signer_fingerprint` is non-null, the fingerprint of the subkey that
- * produced the valid signature is written to `*signer_fingerprint` (caller
- * must free with `free()`). Pass null if the signer identity isn't needed.
- *
- * If `signature_creation_epoch` is non-null, the signature's own creation
- * time is written to `*signature_creation_epoch` as seconds since the Unix
- * epoch (0 if absent). Pass null if not needed.
+ * `pgp_free()`.
  *
  * # Safety
  * `cert`, `armored_message`, and `plaintext` must be non-null.
- * `signer_fingerprint` and `signature_creation_epoch` may be null.
+ * `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+ * be null.
  */
 int32_t pgp_certificate_verify_string(const struct Certificate *cert,
                                       const char *armored_message,
                                       char **plaintext,
                                       char **signer_fingerprint,
                                       int64_t *signature_creation_epoch);
+
+/**
+ * Like `pgp_certificate_verify_string`, with an explicit reference time
+ * `at_epoch` (`0` = current system time) and optional `hash_algo_out`
+ * (RFC 4880 hash algorithm code).
+ *
+ * # Safety
+ * `cert`, `armored_message`, and `plaintext` must be non-null.
+ * `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+ * be null.
+ */
+int32_t pgp_certificate_verify_string_ex(const struct Certificate *cert,
+                                         const char *armored_message,
+                                         int64_t at_epoch,
+                                         char **plaintext,
+                                         char **signer_fingerprint,
+                                         int64_t *signature_creation_epoch,
+                                         uint8_t *hash_algo_out);
 
 /**
  * Revoke the cert and write the updated cert to `*revoked_cert`.
@@ -828,6 +849,23 @@ int32_t pgp_certificate_verify_detached(const struct Certificate *cert,
                                         int64_t *signature_creation_epoch);
 
 /**
+ * Like `pgp_certificate_verify_detached`, with an explicit reference time
+ * `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+ *
+ * # Safety
+ * `cert`, `plaintext`, and `armored_sig` must be non-null.
+ * `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+ * be null.
+ */
+int32_t pgp_certificate_verify_detached_ex(const struct Certificate *cert,
+                                           const char *plaintext,
+                                           const char *armored_sig,
+                                           int64_t at_epoch,
+                                           char **signer_fingerprint,
+                                           int64_t *signature_creation_epoch,
+                                           uint8_t *hash_algo_out);
+
+/**
  * Generate a new certificate carrying `user_id` with an optional validity
  * period. `validity_seconds == 0` means no expiry.
  * Writes the new certificate to `*new_cert`. Caller must free with
@@ -906,6 +944,24 @@ int32_t pgp_decrypt_and_verify_string(const struct Certificate *decrypt_cert,
                                       int64_t *signature_creation_epoch);
 
 /**
+ * Like `pgp_decrypt_and_verify_string`, with an explicit reference time
+ * `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+ *
+ * # Safety
+ * `decrypt_cert`, `verify_cert`, `armored_message`, `plaintext_out`, and
+ * `fingerprint_out` must be non-null. `signature_creation_epoch` and
+ * `hash_algo_out` may be null.
+ */
+int32_t pgp_decrypt_and_verify_string_ex(const struct Certificate *decrypt_cert,
+                                         const struct Certificate *verify_cert,
+                                         const char *armored_message,
+                                         int64_t at_epoch,
+                                         char **plaintext_out,
+                                         char **fingerprint_out,
+                                         int64_t *signature_creation_epoch,
+                                         uint8_t *hash_algo_out);
+
+/**
  * Encrypt `data` (raw bytes, `len` long) to the certificate and write an
  * ASCII-armored message to `*armored_message`. Caller must free
  * `*armored_message` with `free()`.
@@ -973,6 +1029,24 @@ int32_t pgp_certificate_verify_bytes(const struct Certificate *cert,
                                      int64_t *signature_creation_epoch);
 
 /**
+ * Like `pgp_certificate_verify_bytes`, with an explicit reference time
+ * `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+ *
+ * # Safety
+ * `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
+ * non-null. `signer_fingerprint`, `signature_creation_epoch`, and
+ * `hash_algo_out` may be null.
+ */
+int32_t pgp_certificate_verify_bytes_ex(const struct Certificate *cert,
+                                        const char *armored_message,
+                                        int64_t at_epoch,
+                                        uint8_t **plaintext_out,
+                                        uintptr_t *plaintext_len,
+                                        char **signer_fingerprint,
+                                        int64_t *signature_creation_epoch,
+                                        uint8_t *hash_algo_out);
+
+/**
  * Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
  * and write an ASCII-armored message to `*armored_message`. Caller must free
  * `*armored_message` with `free()`.
@@ -1022,6 +1096,23 @@ int32_t pgp_certificate_verify_cleartext(const struct Certificate *cert,
                                          char **plaintext_out,
                                          char **signer_fingerprint,
                                          int64_t *signature_creation_epoch);
+
+/**
+ * Like `pgp_certificate_verify_cleartext`, with an explicit reference time
+ * `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+ *
+ * # Safety
+ * `cert`, `signed_message`, and `plaintext_out` must be non-null.
+ * `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+ * be null.
+ */
+int32_t pgp_certificate_verify_cleartext_ex(const struct Certificate *cert,
+                                            const char *signed_message,
+                                            int64_t at_epoch,
+                                            char **plaintext_out,
+                                            char **signer_fingerprint,
+                                            int64_t *signature_creation_epoch,
+                                            uint8_t *hash_algo_out);
 
 /**
  * Encrypt `plaintext` with `passphrase` (no public key required), writing an
@@ -1087,6 +1178,24 @@ int32_t pgp_decrypt_and_verify_string_symmetric(const struct Certificate *verify
                                                 char **plaintext_out,
                                                 char **fingerprint_out,
                                                 int64_t *signature_creation_epoch);
+
+/**
+ * Like `pgp_decrypt_and_verify_string_symmetric`, with an explicit reference
+ * time `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+ *
+ * # Safety
+ * `verify_cert`, `armored_message`, `passphrase`, `plaintext_out`, and
+ * `fingerprint_out` must be non-null. `signature_creation_epoch` and
+ * `hash_algo_out` may be null.
+ */
+int32_t pgp_decrypt_and_verify_string_symmetric_ex(const struct Certificate *verify_cert,
+                                                   const char *armored_message,
+                                                   const char *passphrase,
+                                                   int64_t at_epoch,
+                                                   char **plaintext_out,
+                                                   char **fingerprint_out,
+                                                   int64_t *signature_creation_epoch,
+                                                   uint8_t *hash_algo_out);
 
 /**
  * Merge updates from `other_cert` into `base_cert`: new signatures,
@@ -1198,5 +1307,23 @@ int32_t pgp_decrypt_and_verify_file(const struct Certificate *decrypt_cert,
                                     const char *output_path,
                                     char **fingerprint_out,
                                     int64_t *signature_creation_epoch);
+
+/**
+ * Like `pgp_decrypt_and_verify_file`, with an explicit reference time
+ * `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+ *
+ * # Safety
+ * `decrypt_cert`, `verify_cert`, `input_path`, `output_path`, and
+ * `fingerprint_out` must be non-null. `signature_creation_epoch` and
+ * `hash_algo_out` may be null.
+ */
+int32_t pgp_decrypt_and_verify_file_ex(const struct Certificate *decrypt_cert,
+                                       const struct Certificate *verify_cert,
+                                       const char *input_path,
+                                       const char *output_path,
+                                       int64_t at_epoch,
+                                       char **fingerprint_out,
+                                       int64_t *signature_creation_epoch,
+                                       uint8_t *hash_algo_out);
 
 #endif  /* pgp_ffi_h */

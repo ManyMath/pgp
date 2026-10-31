@@ -1005,9 +1005,68 @@ int main(void) {
     return 1;
   }
 
+  struct Certificate *bogus_cert = NULL;
+  if (pgp_certificate_from_armored("invalid", &bogus_cert) == 0) {
+    fprintf(stderr, "expected pgp_certificate_from_armored to fail\n");
+    pgp_free(armored);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  char *err_msg = NULL;
+  if (pgp_last_error_message(&err_msg) != 0 || err_msg == NULL ||
+      err_msg[0] == '\0') {
+    fprintf(stderr, "expected non-empty pgp_last_error_message\n");
+    if (err_msg != NULL) pgp_free(err_msg);
+    pgp_free(armored);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  pgp_free(err_msg);
+
+  struct Certificate *ex_cert = NULL;
+  rc = pgp_key_generate("ex-verify@example.org", &ex_cert);
+  if (rc != 0 || ex_cert == NULL) {
+    fprintf(stderr, "pgp_key_generate (ex_cert) failed: rc=%" PRId32 "\n", rc);
+    pgp_free(armored);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+
+  char *signed_ex = NULL;
+  rc = pgp_certificate_sign_string(ex_cert, "ex c check", &signed_ex);
+  if (rc != 0 || signed_ex == NULL) {
+    fprintf(stderr, "pgp_certificate_sign_string failed: rc=%" PRId32 "\n", rc);
+    pgp_certificate_free(ex_cert);
+    pgp_free(armored);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  char *pt_ex = NULL;
+  char *fp_ex = NULL;
+  int64_t ts_ex = 0;
+  uint8_t hash_ex = 0;
+  rc = pgp_certificate_verify_string_ex(ex_cert, signed_ex, 0, &pt_ex, &fp_ex,
+                                        &ts_ex, &hash_ex);
+  if (rc != 0 || pt_ex == NULL || fp_ex == NULL || ts_ex <= 0 ||
+      hash_ex == 0) {
+    fprintf(stderr, "pgp_certificate_verify_string_ex failed: rc=%" PRId32 "\n",
+            rc);
+    if (pt_ex != NULL) pgp_free(pt_ex);
+    if (fp_ex != NULL) pgp_free(fp_ex);
+    pgp_free(signed_ex);
+    pgp_certificate_free(ex_cert);
+    pgp_free(armored);
+    pgp_certificate_free(cert);
+    return 1;
+  }
+  pgp_free(pt_ex);
+  pgp_free(fp_ex);
+  pgp_free(signed_ex);
+  pgp_certificate_free(ex_cert);
+
   printf("%s\n", armored);
 
-  free(armored);
+  pgp_free(armored);
   pgp_certificate_free(cert);
 
   return 0;

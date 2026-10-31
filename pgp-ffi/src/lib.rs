@@ -7,7 +7,7 @@ use sequoia_openpgp::{
     parse::{
         stream::{
             DecryptionHelper, DecryptorBuilder, DetachedVerifierBuilder, MessageLayer,
-            MessageStructure, VerificationHelper, VerifierBuilder,
+            MessageStructure, VerificationHelper, VerificationResult, VerifierBuilder,
         },
         Parse,
     },
@@ -20,6 +20,7 @@ use sequoia_openpgp::{
     },
     KeyHandle, Result,
 };
+use std::cell::RefCell;
 use std::ffi::CStr;
 use std::fs::File;
 use std::io::{BufWriter, Cursor, Read, Write};
@@ -36,6 +37,104 @@ pub enum FFIError {
 }
 
 pub struct Certificate(*mut SequoiaCert);
+
+thread_local! {
+    static LAST_ERROR: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+fn clear_last_error() {
+    LAST_ERROR.with(|slot| slot.borrow_mut().clear());
+}
+
+fn set_last_error(msg: impl Into<String>) {
+    LAST_ERROR.with(|slot| *slot.borrow_mut() = msg.into());
+}
+
+fn fail_with(code: FFIError, err: impl std::fmt::Display) -> i32 {
+    set_last_error(format!("{err:#}"));
+    code as i32
+}
+
+unsafe fn borrow_cert<'a>(cert: *const Certificate) -> std::result::Result<&'a SequoiaCert, i32> {
+    if cert.is_null() {
+        set_last_error("Null certificate pointer");
+        return Err(FFIError::Null as i32);
+    }
+    let wrapper = &*cert;
+    if wrapper.0.is_null() {
+        set_last_error("Invalid certificate handle");
+        return Err(FFIError::Invalid as i32);
+    }
+    Ok(&*wrapper.0)
+}
+
+fn reference_time_from_epoch(at_epoch: i64) -> std::result::Result<Option<SystemTime>, i32> {
+    if at_epoch < 0 {
+        set_last_error("at_epoch must be non-negative (0 means current system time)");
+        return Err(FFIError::Invalid as i32);
+    }
+    if at_epoch == 0 {
+        Ok(None)
+    } else {
+        match UNIX_EPOCH.checked_add(Duration::from_secs(at_epoch as u64)) {
+            Some(t) => Ok(Some(t)),
+            None => {
+                set_last_error("at_epoch overflows SystemTime");
+                Err(FFIError::Invalid as i32)
+            }
+        }
+    }
+}
+
+fn extract_signature_result<'a>(
+    results: Vec<VerificationResult<'a>>,
+) -> std::result::Result<(String, Option<i64>, u8), anyhow::Error> {
+    let mut first_err: Option<String> = None;
+    for res in results {
+        match res {
+            Ok(good) => {
+                let fp = good.ka.key().fingerprint().to_hex();
+                let epoch = good
+                    .sig
+                    .signature_creation_time()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64);
+                let hash_algo = u8::from(good.sig.hash_algo());
+                return Ok((fp, epoch, hash_algo));
+            }
+            Err(e) if first_err.is_none() => {
+                first_err = Some(format!("{e}"));
+            }
+            Err(_) => {}
+        }
+    }
+    match first_err {
+        Some(err) => Err(anyhow::anyhow!("{err}")),
+        None => Err(anyhow::anyhow!("No valid signature")),
+    }
+}
+
+unsafe fn write_verify_metadata(
+    signer_fp: Option<&str>,
+    signature_creation_epoch: Option<i64>,
+    hash_algo: Option<u8>,
+    signer_fingerprint_out: *mut *mut libc::c_char,
+    signature_creation_epoch_out: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    if !signature_creation_epoch_out.is_null() {
+        *signature_creation_epoch_out = signature_creation_epoch.unwrap_or(0);
+    }
+    if !hash_algo_out.is_null() {
+        *hash_algo_out = hash_algo.unwrap_or(0);
+    }
+    if !signer_fingerprint_out.is_null() {
+        if let Some(fp) = signer_fp {
+            return write_c_string(fp, signer_fingerprint_out);
+        }
+    }
+    FFIError::Ok as i32
+}
 
 unsafe fn write_c_string(value: &str, out: *mut *mut libc::c_char) -> i32 {
     let bytes = value.as_bytes();
@@ -94,6 +193,7 @@ struct VerifyHelper<'a> {
     cert: &'a SequoiaCert,
     signer_fp: Option<String>,
     signature_creation_epoch: Option<i64>,
+    hash_algo: Option<u8>,
 }
 
 impl VerificationHelper for VerifyHelper<'_> {
@@ -106,17 +206,11 @@ impl VerificationHelper for VerifyHelper<'_> {
         for (index, layer) in structure.into_iter().enumerate() {
             match layer {
                 MessageLayer::SignatureGroup { results } if index == 0 => {
-                    if let Some(good_checksum) = results.into_iter().flatten().next() {
-                        self.signer_fp = Some(good_checksum.ka.key().fingerprint().to_hex());
-                        self.signature_creation_epoch = good_checksum
-                            .sig
-                            .signature_creation_time()
-                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs() as i64);
-                        good = true;
-                    } else {
-                        return Err(anyhow::anyhow!("No valid signature"));
-                    }
+                    let (fp, epoch, hash_algo) = extract_signature_result(results)?;
+                    self.signer_fp = Some(fp);
+                    self.signature_creation_epoch = epoch;
+                    self.hash_algo = Some(hash_algo);
+                    good = true;
                 }
                 _ => return Err(anyhow::anyhow!("Unexpected message structure")),
             }
@@ -282,6 +376,21 @@ impl DecryptionHelper for RawSessionKeyHelper {
     }
 }
 
+/// Write the last error message recorded on the current thread to `*out`.
+/// Returns an empty string if no error is recorded. Does not clear the stored
+/// message. Caller must free `*out` with `pgp_free()`.
+///
+/// # Safety
+/// `out` must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_last_error_message(out: *mut *mut libc::c_char) -> i32 {
+    if out.is_null() {
+        return FFIError::Null as i32;
+    }
+    *out = ptr::null_mut();
+    LAST_ERROR.with(|slot| write_c_string(&slot.borrow(), out))
+}
+
 /// Free a string or byte buffer returned through an `out` parameter.
 ///
 /// # Safety
@@ -312,14 +421,17 @@ pub unsafe extern "C" fn pgp_certificate_from_armored(
     armored: *const libc::c_char,
     cert: *mut *mut Certificate,
 ) -> i32 {
+    clear_last_error();
     if armored.is_null() || cert.is_null() {
+        set_last_error("Null pointer passed to pgp_certificate_from_armored");
         return FFIError::Null as i32;
     }
+    *cert = ptr::null_mut();
 
     let c_str = CStr::from_ptr(armored);
     let armored_str = match c_str.to_str() {
         Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
     let cursor = Cursor::new(armored_str);
@@ -331,7 +443,7 @@ pub unsafe extern "C" fn pgp_certificate_from_armored(
             *cert = Box::into_raw(Box::new(Certificate(inner)));
             FFIError::Ok as i32
         }
-        Err(_) => FFIError::Invalid as i32,
+        Err(e) => fail_with(FFIError::Invalid, e),
     }
 }
 
@@ -344,14 +456,16 @@ pub unsafe extern "C" fn pgp_key_generate(
     user_id: *const libc::c_char,
     new_cert: *mut *mut Certificate,
 ) -> i32 {
+    clear_last_error();
     if user_id.is_null() || new_cert.is_null() {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
 
     let c_str = CStr::from_ptr(user_id);
     let user_id_str = match c_str.to_str() {
         Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
     let result = CertBuilder::new()
@@ -366,7 +480,7 @@ pub unsafe extern "C" fn pgp_key_generate(
             *new_cert = Box::into_raw(Box::new(Certificate(inner)));
             FFIError::Ok as i32
         }
-        Err(_) => FFIError::Failed as i32,
+        Err(e) => fail_with(FFIError::Failed, e),
     }
 }
 
@@ -743,16 +857,17 @@ pub unsafe extern "C" fn pgp_certificate_decrypt_string(
     armored_message: *const libc::c_char,
     plaintext: *mut *mut libc::c_char,
 ) -> i32 {
+    clear_last_error();
     if cert.is_null() || armored_message.is_null() || plaintext.is_null() {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
     *plaintext = ptr::null_mut();
 
-    let wrapper = &*cert;
-    if wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let cert = &*wrapper.0;
+    let cert = match borrow_cert(cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
     let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
 
     let policy = &StandardPolicy::new();
@@ -763,19 +878,19 @@ pub unsafe extern "C" fn pgp_certificate_decrypt_string(
     let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
         Ok(builder) => match builder.with_policy(policy, None, helper) {
             Ok(decryptor) => decryptor,
-            Err(_) => return FFIError::Failed as i32,
+            Err(e) => return fail_with(FFIError::Failed, e),
         },
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
     let mut out = Vec::new();
-    if decryptor.read_to_end(&mut out).is_err() {
-        return FFIError::Failed as i32;
+    if let Err(e) = decryptor.read_to_end(&mut out) {
+        return fail_with(FFIError::Failed, e);
     }
 
     let text = match String::from_utf8(out) {
         Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
     write_c_string(&text, plaintext)
 }
@@ -920,21 +1035,123 @@ pub unsafe extern "C" fn pgp_certificate_sign_string(
     write_c_string(&armored, armored_message)
 }
 
+struct VerifiedPayload {
+    data: Vec<u8>,
+    signer_fp: Option<String>,
+    signature_creation_epoch: Option<i64>,
+    hash_algo: Option<u8>,
+}
+
+unsafe fn verify_inline_bytes_ex(
+    cert: *const Certificate,
+    armored_bytes: &[u8],
+    at_epoch: i64,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> std::result::Result<VerifiedPayload, i32> {
+    if !signer_fingerprint.is_null() {
+        *signer_fingerprint = ptr::null_mut();
+    }
+    if !signature_creation_epoch.is_null() {
+        *signature_creation_epoch = 0;
+    }
+    if !hash_algo_out.is_null() {
+        *hash_algo_out = 0;
+    }
+
+    let cert = borrow_cert(cert)?;
+    let at = reference_time_from_epoch(at_epoch)?;
+    let policy = &StandardPolicy::new();
+    let helper = VerifyHelper {
+        cert,
+        signer_fp: None,
+        signature_creation_epoch: None,
+        hash_algo: None,
+    };
+    let mut verifier = match VerifierBuilder::from_bytes(armored_bytes) {
+        Ok(builder) => match builder.with_policy(policy, at, helper) {
+            Ok(verifier) => verifier,
+            Err(e) => return Err(fail_with(FFIError::Failed, e)),
+        },
+        Err(e) => return Err(fail_with(FFIError::Invalid, e)),
+    };
+
+    let mut out = Vec::new();
+    if let Err(e) = verifier.read_to_end(&mut out) {
+        return Err(fail_with(FFIError::Failed, e));
+    }
+
+    let helper = verifier.into_helper();
+    Ok(VerifiedPayload {
+        data: out,
+        signer_fp: helper.signer_fp,
+        signature_creation_epoch: helper.signature_creation_epoch,
+        hash_algo: helper.hash_algo,
+    })
+}
+
+unsafe fn verify_inline_string_ex(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    at_epoch: i64,
+    plaintext: *mut *mut libc::c_char,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
+    if cert.is_null() || armored_message.is_null() || plaintext.is_null() {
+        set_last_error("Null pointer argument");
+        return FFIError::Null as i32;
+    }
+    *plaintext = ptr::null_mut();
+
+    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
+    let verified = match verify_inline_bytes_ex(
+        cert,
+        armored_bytes,
+        at_epoch,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    ) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+
+    let text = match String::from_utf8(verified.data) {
+        Ok(s) => s,
+        Err(e) => return fail_with(FFIError::Invalid, e),
+    };
+
+    let r = write_c_string(&text, plaintext);
+    if r != 0 {
+        return r;
+    }
+    let r = write_verify_metadata(
+        verified.signer_fp.as_deref(),
+        verified.signature_creation_epoch,
+        verified.hash_algo,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    );
+    if r != 0 {
+        libc::free(*plaintext as *mut libc::c_void);
+        *plaintext = ptr::null_mut();
+    }
+    r
+}
+
 /// Verify an ASCII-armored signed message using the certificate and write the
 /// verified plaintext to `*plaintext`. Caller must free `*plaintext` with
-/// `free()`.
-///
-/// If `signer_fingerprint` is non-null, the fingerprint of the subkey that
-/// produced the valid signature is written to `*signer_fingerprint` (caller
-/// must free with `free()`). Pass null if the signer identity isn't needed.
-///
-/// If `signature_creation_epoch` is non-null, the signature's own creation
-/// time is written to `*signature_creation_epoch` as seconds since the Unix
-/// epoch (0 if absent). Pass null if not needed.
+/// `pgp_free()`.
 ///
 /// # Safety
 /// `cert`, `armored_message`, and `plaintext` must be non-null.
-/// `signer_fingerprint` and `signature_creation_epoch` may be null.
+/// `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+/// be null.
 #[no_mangle]
 pub unsafe extern "C" fn pgp_certificate_verify_string(
     cert: *const Certificate,
@@ -943,59 +1160,44 @@ pub unsafe extern "C" fn pgp_certificate_verify_string(
     signer_fingerprint: *mut *mut libc::c_char,
     signature_creation_epoch: *mut i64,
 ) -> i32 {
-    if cert.is_null() || armored_message.is_null() || plaintext.is_null() {
-        return FFIError::Null as i32;
-    }
-    *plaintext = ptr::null_mut();
-    if !signer_fingerprint.is_null() {
-        *signer_fingerprint = ptr::null_mut();
-    }
-
-    let wrapper = &*cert;
-    if wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let cert = &*wrapper.0;
-    let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
-
-    let policy = &StandardPolicy::new();
-    let helper = VerifyHelper {
+    verify_inline_string_ex(
         cert,
-        signer_fp: None,
-        signature_creation_epoch: None,
-    };
-    let mut verifier = match VerifierBuilder::from_bytes(armored_bytes) {
-        Ok(builder) => match builder.with_policy(policy, None, helper) {
-            Ok(verifier) => verifier,
-            Err(_) => return FFIError::Failed as i32,
-        },
-        Err(_) => return FFIError::Invalid as i32,
-    };
+        armored_message,
+        0,
+        plaintext,
+        signer_fingerprint,
+        signature_creation_epoch,
+        ptr::null_mut(),
+    )
+}
 
-    let mut out = Vec::new();
-    if verifier.read_to_end(&mut out).is_err() {
-        return FFIError::Failed as i32;
-    }
-
-    let text = match String::from_utf8(out) {
-        Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
-    };
-
-    let r = write_c_string(&text, plaintext);
-    if r != 0 {
-        return r;
-    }
-    let helper = verifier.into_helper();
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
-    }
-    if !signer_fingerprint.is_null() {
-        if let Some(fp) = helper.signer_fp {
-            return write_c_string(&fp, signer_fingerprint);
-        }
-    }
-    FFIError::Ok as i32
+/// Like `pgp_certificate_verify_string`, with an explicit reference time
+/// `at_epoch` (`0` = current system time) and optional `hash_algo_out`
+/// (RFC 4880 hash algorithm code).
+///
+/// # Safety
+/// `cert`, `armored_message`, and `plaintext` must be non-null.
+/// `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+/// be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_string_ex(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    at_epoch: i64,
+    plaintext: *mut *mut libc::c_char,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    verify_inline_string_ex(
+        cert,
+        armored_message,
+        at_epoch,
+        plaintext,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    )
 }
 
 /// Revoke the cert and write the updated cert to `*revoked_cert`.
@@ -2952,25 +3154,27 @@ pub unsafe extern "C" fn pgp_certificate_unlock(
     passphrase: *const libc::c_char,
     out_cert: *mut *mut Certificate,
 ) -> i32 {
+    clear_last_error();
     if cert.is_null() || passphrase.is_null() || out_cert.is_null() {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
     *out_cert = ptr::null_mut();
 
-    let wrapper = &*cert;
-    if wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let sequoia_cert = (&*wrapper.0).clone();
+    let sequoia_cert = match borrow_cert(cert) {
+        Ok(c) => c.clone(),
+        Err(code) => return code,
+    };
 
     // Require at least one key with secret material.
     if sequoia_cert.keys().secret().next().is_none() {
+        set_last_error("Certificate carries no secret key material");
         return FFIError::NotFound as i32;
     }
 
     let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
         Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
     let password: Password = passphrase_str.into();
 
@@ -2983,7 +3187,7 @@ pub unsafe extern "C" fn pgp_certificate_unlock(
         }
         let decrypted = match key.decrypt_secret(&password) {
             Ok(k) => k,
-            Err(_) => return FFIError::Invalid as i32,
+            Err(e) => return fail_with(FFIError::Invalid, e),
         };
         let packet: sequoia_openpgp::Packet = if ka.primary() {
             decrypted.role_into_primary().into()
@@ -2995,7 +3199,7 @@ pub unsafe extern "C" fn pgp_certificate_unlock(
 
     let updated = match sequoia_cert.insert_packets(packets) {
         Ok((c, _)) => c,
-        Err(_) => return FFIError::Failed as i32,
+        Err(e) => return fail_with(FFIError::Failed, e),
     };
 
     let inner = Box::into_raw(Box::new(updated));
@@ -3168,18 +3372,57 @@ pub unsafe extern "C" fn pgp_certificate_verify_detached(
     signer_fingerprint: *mut *mut libc::c_char,
     signature_creation_epoch: *mut i64,
 ) -> i32 {
+    pgp_certificate_verify_detached_ex(
+        cert,
+        plaintext,
+        armored_sig,
+        0,
+        signer_fingerprint,
+        signature_creation_epoch,
+        ptr::null_mut(),
+    )
+}
+
+/// Like `pgp_certificate_verify_detached`, with an explicit reference time
+/// `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+///
+/// # Safety
+/// `cert`, `plaintext`, and `armored_sig` must be non-null.
+/// `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+/// be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_detached_ex(
+    cert: *const Certificate,
+    plaintext: *const libc::c_char,
+    armored_sig: *const libc::c_char,
+    at_epoch: i64,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
     if cert.is_null() || plaintext.is_null() || armored_sig.is_null() {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
     if !signer_fingerprint.is_null() {
         *signer_fingerprint = ptr::null_mut();
     }
-
-    let wrapper = &*cert;
-    if wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
+    if !signature_creation_epoch.is_null() {
+        *signature_creation_epoch = 0;
     }
-    let cert = &*wrapper.0;
+    if !hash_algo_out.is_null() {
+        *hash_algo_out = 0;
+    }
+
+    let cert = match borrow_cert(cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let at = match reference_time_from_epoch(at_epoch) {
+        Ok(t) => t,
+        Err(code) => return code,
+    };
     let plaintext_bytes = CStr::from_ptr(plaintext).to_bytes();
     let sig_bytes = CStr::from_ptr(armored_sig).to_bytes();
 
@@ -3188,29 +3431,29 @@ pub unsafe extern "C" fn pgp_certificate_verify_detached(
         cert,
         signer_fp: None,
         signature_creation_epoch: None,
+        hash_algo: None,
     };
     let mut verifier = match DetachedVerifierBuilder::from_bytes(sig_bytes) {
-        Ok(b) => match b.with_policy(policy, None, helper) {
+        Ok(b) => match b.with_policy(policy, at, helper) {
             Ok(v) => v,
-            Err(_) => return FFIError::Failed as i32,
+            Err(e) => return fail_with(FFIError::Failed, e),
         },
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
-    if verifier.verify_bytes(plaintext_bytes).is_err() {
-        return FFIError::Failed as i32;
+    if let Err(e) = verifier.verify_bytes(plaintext_bytes) {
+        return fail_with(FFIError::Failed, e);
     }
 
     let helper = verifier.into_helper();
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
-    }
-    if !signer_fingerprint.is_null() {
-        if let Some(fp) = helper.signer_fp {
-            return write_c_string(&fp, signer_fingerprint);
-        }
-    }
-    FFIError::Ok as i32
+    write_verify_metadata(
+        helper.signer_fp.as_deref(),
+        helper.signature_creation_epoch,
+        helper.hash_algo,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    )
 }
 
 /// Generate a new certificate carrying `user_id` with an optional validity
@@ -3506,8 +3749,10 @@ struct DecryptAndVerifyHelper<'a> {
     decrypt_cert: &'a SequoiaCert,
     verify_cert: &'a SequoiaCert,
     policy: &'a dyn Policy,
+    at: Option<SystemTime>,
     signer_fp: Option<String>,
     signature_creation_epoch: Option<i64>,
+    hash_algo: Option<u8>,
 }
 
 impl VerificationHelper for DecryptAndVerifyHelper<'_> {
@@ -3517,21 +3762,25 @@ impl VerificationHelper for DecryptAndVerifyHelper<'_> {
 
     fn check(&mut self, structure: MessageStructure) -> Result<()> {
         let mut found = false;
+        let mut first_err: Option<anyhow::Error> = None;
         for layer in structure {
             if let MessageLayer::SignatureGroup { results } = layer {
-                if let Some(good) = results.into_iter().flatten().next() {
-                    self.signer_fp = Some(good.ka.key().fingerprint().to_hex());
-                    self.signature_creation_epoch = good
-                        .sig
-                        .signature_creation_time()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64);
-                    found = true;
+                match extract_signature_result(results) {
+                    Ok((fp, epoch, hash_algo)) => {
+                        self.signer_fp = Some(fp);
+                        self.signature_creation_epoch = epoch;
+                        self.hash_algo = Some(hash_algo);
+                        found = true;
+                    }
+                    Err(e) if first_err.is_none() => first_err = Some(e),
+                    Err(_) => {}
                 }
             }
         }
         if found {
             Ok(())
+        } else if let Some(err) = first_err {
+            Err(err)
         } else {
             Err(anyhow::anyhow!("No valid signature"))
         }
@@ -3550,7 +3799,7 @@ impl DecryptionHelper for DecryptAndVerifyHelper<'_> {
             .decrypt_cert
             .keys()
             .unencrypted_secret()
-            .with_policy(self.policy, None)
+            .with_policy(self.policy, self.at)
             .supported()
             .alive()
             .revoked(false)
@@ -3720,27 +3969,67 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_string(
     fingerprint_out: *mut *mut libc::c_char,
     signature_creation_epoch: *mut i64,
 ) -> i32 {
+    pgp_decrypt_and_verify_string_ex(
+        decrypt_cert,
+        verify_cert,
+        armored_message,
+        0,
+        plaintext_out,
+        fingerprint_out,
+        signature_creation_epoch,
+        ptr::null_mut(),
+    )
+}
+
+/// Like `pgp_decrypt_and_verify_string`, with an explicit reference time
+/// `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+///
+/// # Safety
+/// `decrypt_cert`, `verify_cert`, `armored_message`, `plaintext_out`, and
+/// `fingerprint_out` must be non-null. `signature_creation_epoch` and
+/// `hash_algo_out` may be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_and_verify_string_ex(
+    decrypt_cert: *const Certificate,
+    verify_cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    at_epoch: i64,
+    plaintext_out: *mut *mut libc::c_char,
+    fingerprint_out: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
     if decrypt_cert.is_null()
         || verify_cert.is_null()
         || armored_message.is_null()
         || plaintext_out.is_null()
         || fingerprint_out.is_null()
     {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
     *plaintext_out = ptr::null_mut();
     *fingerprint_out = ptr::null_mut();
+    if !signature_creation_epoch.is_null() {
+        *signature_creation_epoch = 0;
+    }
+    if !hash_algo_out.is_null() {
+        *hash_algo_out = 0;
+    }
 
-    let decrypt_wrapper = &*decrypt_cert;
-    if decrypt_wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let verify_wrapper = &*verify_cert;
-    if verify_wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let decrypt_cert_ref = &*decrypt_wrapper.0;
-    let verify_cert_ref = &*verify_wrapper.0;
+    let decrypt_cert_ref = match borrow_cert(decrypt_cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let verify_cert_ref = match borrow_cert(verify_cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let at = match reference_time_from_epoch(at_epoch) {
+        Ok(t) => t,
+        Err(code) => return code,
+    };
     let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
 
     let policy = &StandardPolicy::new();
@@ -3748,46 +4037,52 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_string(
         decrypt_cert: decrypt_cert_ref,
         verify_cert: verify_cert_ref,
         policy,
+        at,
         signer_fp: None,
         signature_creation_epoch: None,
+        hash_algo: None,
     };
 
     let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
-        Ok(builder) => match builder.with_policy(policy, None, helper) {
+        Ok(builder) => match builder.with_policy(policy, at, helper) {
             Ok(d) => d,
-            Err(_) => return FFIError::Failed as i32,
+            Err(e) => return fail_with(FFIError::Failed, e),
         },
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
     let mut out = Vec::new();
-    if decryptor.read_to_end(&mut out).is_err() {
-        return FFIError::Failed as i32;
+    if let Err(e) = decryptor.read_to_end(&mut out) {
+        return fail_with(FFIError::Failed, e);
     }
 
     let text = match String::from_utf8(out) {
         Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
     let helper = decryptor.into_helper();
     let fp = match helper.signer_fp {
         Some(fp) => fp,
-        None => return FFIError::Failed as i32,
+        None => {
+            set_last_error("No valid signature");
+            return FFIError::Failed as i32;
+        }
     };
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
-    }
 
     let r = write_c_string(&text, plaintext_out);
     if r != 0 {
         return r;
     }
-    let r = write_c_string(&fp, fingerprint_out);
+    let r = write_verify_metadata(
+        Some(&fp),
+        helper.signature_creation_epoch,
+        helper.hash_algo,
+        fingerprint_out,
+        signature_creation_epoch,
+        hash_algo_out,
+    );
     if r != 0 {
-        // The plaintext buffer was already handed out; free it so the caller,
-        // which treats a non-zero return as "nothing was allocated", cannot
-        // leak it.
         libc::free(*plaintext_out as *mut libc::c_void);
         *plaintext_out = ptr::null_mut();
     }
@@ -4033,59 +4328,79 @@ pub unsafe extern "C" fn pgp_certificate_verify_bytes(
     signer_fingerprint: *mut *mut libc::c_char,
     signature_creation_epoch: *mut i64,
 ) -> i32 {
+    pgp_certificate_verify_bytes_ex(
+        cert,
+        armored_message,
+        0,
+        plaintext_out,
+        plaintext_len,
+        signer_fingerprint,
+        signature_creation_epoch,
+        ptr::null_mut(),
+    )
+}
+
+/// Like `pgp_certificate_verify_bytes`, with an explicit reference time
+/// `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+///
+/// # Safety
+/// `cert`, `armored_message`, `plaintext_out`, and `plaintext_len` must be
+/// non-null. `signer_fingerprint`, `signature_creation_epoch`, and
+/// `hash_algo_out` may be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_bytes_ex(
+    cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    at_epoch: i64,
+    plaintext_out: *mut *mut u8,
+    plaintext_len: *mut usize,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
     if cert.is_null()
         || armored_message.is_null()
         || plaintext_out.is_null()
         || plaintext_len.is_null()
     {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
     *plaintext_out = ptr::null_mut();
     *plaintext_len = 0;
-    if !signer_fingerprint.is_null() {
-        *signer_fingerprint = ptr::null_mut();
-    }
 
-    let wrapper = &*cert;
-    if wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let cert = &*wrapper.0;
     let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
-
-    let policy = &StandardPolicy::new();
-    let helper = VerifyHelper {
+    let verified = match verify_inline_bytes_ex(
         cert,
-        signer_fp: None,
-        signature_creation_epoch: None,
-    };
-    let mut verifier = match VerifierBuilder::from_bytes(armored_bytes) {
-        Ok(builder) => match builder.with_policy(policy, None, helper) {
-            Ok(v) => v,
-            Err(_) => return FFIError::Failed as i32,
-        },
-        Err(_) => return FFIError::Invalid as i32,
+        armored_bytes,
+        at_epoch,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    ) {
+        Ok(v) => v,
+        Err(code) => return code,
     };
 
-    let mut out = Vec::new();
-    if verifier.read_to_end(&mut out).is_err() {
-        return FFIError::Failed as i32;
-    }
-
-    let r = write_bytes_buffer(&out, plaintext_out, plaintext_len);
+    let r = write_bytes_buffer(&verified.data, plaintext_out, plaintext_len);
     if r != 0 {
         return r;
     }
-    let helper = verifier.into_helper();
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
+    let r = write_verify_metadata(
+        verified.signer_fp.as_deref(),
+        verified.signature_creation_epoch,
+        verified.hash_algo,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    );
+    if r != 0 {
+        libc::free(*plaintext_out as *mut libc::c_void);
+        *plaintext_out = ptr::null_mut();
+        *plaintext_len = 0;
     }
-    if !signer_fingerprint.is_null() {
-        if let Some(fp) = helper.signer_fp {
-            return write_c_string(&fp, signer_fingerprint);
-        }
-    }
-    FFIError::Ok as i32
+    r
 }
 
 /// Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
@@ -4275,59 +4590,43 @@ pub unsafe extern "C" fn pgp_certificate_verify_cleartext(
     signer_fingerprint: *mut *mut libc::c_char,
     signature_creation_epoch: *mut i64,
 ) -> i32 {
-    if cert.is_null() || signed_message.is_null() || plaintext_out.is_null() {
-        return FFIError::Null as i32;
-    }
-    *plaintext_out = ptr::null_mut();
-    if !signer_fingerprint.is_null() {
-        *signer_fingerprint = ptr::null_mut();
-    }
-
-    let wrapper = &*cert;
-    if wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let cert = &*wrapper.0;
-    let msg_bytes = CStr::from_ptr(signed_message).to_bytes();
-
-    let policy = &StandardPolicy::new();
-    let helper = VerifyHelper {
+    pgp_certificate_verify_cleartext_ex(
         cert,
-        signer_fp: None,
-        signature_creation_epoch: None,
-    };
-    // VerifierBuilder handles cleartext signatures transparently.
-    let mut verifier = match VerifierBuilder::from_bytes(msg_bytes) {
-        Ok(builder) => match builder.with_policy(policy, None, helper) {
-            Ok(v) => v,
-            Err(_) => return FFIError::Failed as i32,
-        },
-        Err(_) => return FFIError::Invalid as i32,
-    };
+        signed_message,
+        0,
+        plaintext_out,
+        signer_fingerprint,
+        signature_creation_epoch,
+        ptr::null_mut(),
+    )
+}
 
-    let mut out = Vec::new();
-    if verifier.read_to_end(&mut out).is_err() {
-        return FFIError::Failed as i32;
-    }
-
-    let text = match String::from_utf8(out) {
-        Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
-    };
-    let r = write_c_string(&text, plaintext_out);
-    if r != 0 {
-        return r;
-    }
-    let helper = verifier.into_helper();
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
-    }
-    if !signer_fingerprint.is_null() {
-        if let Some(fp) = helper.signer_fp {
-            return write_c_string(&fp, signer_fingerprint);
-        }
-    }
-    FFIError::Ok as i32
+/// Like `pgp_certificate_verify_cleartext`, with an explicit reference time
+/// `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+///
+/// # Safety
+/// `cert`, `signed_message`, and `plaintext_out` must be non-null.
+/// `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+/// be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_certificate_verify_cleartext_ex(
+    cert: *const Certificate,
+    signed_message: *const libc::c_char,
+    at_epoch: i64,
+    plaintext_out: *mut *mut libc::c_char,
+    signer_fingerprint: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    verify_inline_string_ex(
+        cert,
+        signed_message,
+        at_epoch,
+        plaintext_out,
+        signer_fingerprint,
+        signature_creation_epoch,
+        hash_algo_out,
+    )
 }
 
 // -- Feature 4: Symmetric encryption (passphrase-only)
@@ -4471,6 +4770,7 @@ struct SymmetricDecryptAndVerifyHelper<'a> {
     verify_cert: &'a SequoiaCert,
     signer_fp: Option<String>,
     signature_creation_epoch: Option<i64>,
+    hash_algo: Option<u8>,
 }
 
 impl VerificationHelper for SymmetricDecryptAndVerifyHelper<'_> {
@@ -4480,21 +4780,25 @@ impl VerificationHelper for SymmetricDecryptAndVerifyHelper<'_> {
 
     fn check(&mut self, structure: MessageStructure) -> Result<()> {
         let mut found = false;
+        let mut first_err: Option<anyhow::Error> = None;
         for layer in structure {
             if let MessageLayer::SignatureGroup { results } = layer {
-                if let Some(good) = results.into_iter().flatten().next() {
-                    self.signer_fp = Some(good.ka.key().fingerprint().to_hex());
-                    self.signature_creation_epoch = good
-                        .sig
-                        .signature_creation_time()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64);
-                    found = true;
+                match extract_signature_result(results) {
+                    Ok((fp, epoch, hash_algo)) => {
+                        self.signer_fp = Some(fp);
+                        self.signature_creation_epoch = epoch;
+                        self.hash_algo = Some(hash_algo);
+                        found = true;
+                    }
+                    Err(e) if first_err.is_none() => first_err = Some(e),
+                    Err(_) => {}
                 }
             }
         }
         if found {
             Ok(())
+        } else if let Some(err) = first_err {
+            Err(err)
         } else {
             Err(anyhow::anyhow!("No valid signature"))
         }
@@ -4637,26 +4941,67 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_string_symmetric(
     fingerprint_out: *mut *mut libc::c_char,
     signature_creation_epoch: *mut i64,
 ) -> i32 {
+    pgp_decrypt_and_verify_string_symmetric_ex(
+        verify_cert,
+        armored_message,
+        passphrase,
+        0,
+        plaintext_out,
+        fingerprint_out,
+        signature_creation_epoch,
+        ptr::null_mut(),
+    )
+}
+
+/// Like `pgp_decrypt_and_verify_string_symmetric`, with an explicit reference
+/// time `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+///
+/// # Safety
+/// `verify_cert`, `armored_message`, `passphrase`, `plaintext_out`, and
+/// `fingerprint_out` must be non-null. `signature_creation_epoch` and
+/// `hash_algo_out` may be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_and_verify_string_symmetric_ex(
+    verify_cert: *const Certificate,
+    armored_message: *const libc::c_char,
+    passphrase: *const libc::c_char,
+    at_epoch: i64,
+    plaintext_out: *mut *mut libc::c_char,
+    fingerprint_out: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
     if verify_cert.is_null()
         || armored_message.is_null()
         || passphrase.is_null()
         || plaintext_out.is_null()
         || fingerprint_out.is_null()
     {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
     *plaintext_out = ptr::null_mut();
     *fingerprint_out = ptr::null_mut();
-
-    let verify_wrapper = &*verify_cert;
-    if verify_wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
+    if !signature_creation_epoch.is_null() {
+        *signature_creation_epoch = 0;
     }
-    let verify_cert_ref = &*verify_wrapper.0;
+    if !hash_algo_out.is_null() {
+        *hash_algo_out = 0;
+    }
+
+    let verify_cert_ref = match borrow_cert(verify_cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let at = match reference_time_from_epoch(at_epoch) {
+        Ok(t) => t,
+        Err(code) => return code,
+    };
     let armored_bytes = CStr::from_ptr(armored_message).to_bytes();
     let passphrase_str = match CStr::from_ptr(passphrase).to_str() {
         Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
     let password: Password = passphrase_str.into();
 
@@ -4666,40 +5011,48 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_string_symmetric(
         verify_cert: verify_cert_ref,
         signer_fp: None,
         signature_creation_epoch: None,
+        hash_algo: None,
     };
 
     let mut decryptor = match DecryptorBuilder::from_bytes(armored_bytes) {
-        Ok(builder) => match builder.with_policy(policy, None, helper) {
+        Ok(builder) => match builder.with_policy(policy, at, helper) {
             Ok(d) => d,
-            Err(_) => return FFIError::Failed as i32,
+            Err(e) => return fail_with(FFIError::Failed, e),
         },
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
     let mut out = Vec::new();
-    if decryptor.read_to_end(&mut out).is_err() {
-        return FFIError::Failed as i32;
+    if let Err(e) = decryptor.read_to_end(&mut out) {
+        return fail_with(FFIError::Failed, e);
     }
 
     let text = match String::from_utf8(out) {
         Ok(s) => s,
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
     let helper = decryptor.into_helper();
     let fp = match helper.signer_fp {
         Some(fp) => fp,
-        None => return FFIError::Failed as i32,
+        None => {
+            set_last_error("No valid signature");
+            return FFIError::Failed as i32;
+        }
     };
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
-    }
 
     let r = write_c_string(&text, plaintext_out);
     if r != 0 {
         return r;
     }
-    let r = write_c_string(&fp, fingerprint_out);
+    let r = write_verify_metadata(
+        Some(&fp),
+        helper.signature_creation_epoch,
+        helper.hash_algo,
+        fingerprint_out,
+        signature_creation_epoch,
+        hash_algo_out,
+    );
     if r != 0 {
         libc::free(*plaintext_out as *mut libc::c_void);
         *plaintext_out = ptr::null_mut();
@@ -5198,26 +5551,66 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_file(
     fingerprint_out: *mut *mut libc::c_char,
     signature_creation_epoch: *mut i64,
 ) -> i32 {
+    pgp_decrypt_and_verify_file_ex(
+        decrypt_cert,
+        verify_cert,
+        input_path,
+        output_path,
+        0,
+        fingerprint_out,
+        signature_creation_epoch,
+        ptr::null_mut(),
+    )
+}
+
+/// Like `pgp_decrypt_and_verify_file`, with an explicit reference time
+/// `at_epoch` (`0` = current system time) and optional `hash_algo_out`.
+///
+/// # Safety
+/// `decrypt_cert`, `verify_cert`, `input_path`, `output_path`, and
+/// `fingerprint_out` must be non-null. `signature_creation_epoch` and
+/// `hash_algo_out` may be null.
+#[no_mangle]
+pub unsafe extern "C" fn pgp_decrypt_and_verify_file_ex(
+    decrypt_cert: *const Certificate,
+    verify_cert: *const Certificate,
+    input_path: *const libc::c_char,
+    output_path: *const libc::c_char,
+    at_epoch: i64,
+    fingerprint_out: *mut *mut libc::c_char,
+    signature_creation_epoch: *mut i64,
+    hash_algo_out: *mut u8,
+) -> i32 {
+    clear_last_error();
     if decrypt_cert.is_null()
         || verify_cert.is_null()
         || input_path.is_null()
         || output_path.is_null()
         || fingerprint_out.is_null()
     {
+        set_last_error("Null pointer argument");
         return FFIError::Null as i32;
     }
     *fingerprint_out = ptr::null_mut();
+    if !signature_creation_epoch.is_null() {
+        *signature_creation_epoch = 0;
+    }
+    if !hash_algo_out.is_null() {
+        *hash_algo_out = 0;
+    }
 
-    let decrypt_wrapper = &*decrypt_cert;
-    if decrypt_wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let verify_wrapper = &*verify_cert;
-    if verify_wrapper.0.is_null() {
-        return FFIError::Invalid as i32;
-    }
-    let decrypt_cert_ref = &*decrypt_wrapper.0;
-    let verify_cert_ref = &*verify_wrapper.0;
+    let decrypt_cert_ref = match borrow_cert(decrypt_cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let verify_cert_ref = match borrow_cert(verify_cert) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let at = match reference_time_from_epoch(at_epoch) {
+        Ok(t) => t,
+        Err(code) => return code,
+    };
 
     let input_path = match path_str(input_path) {
         Ok(s) => s,
@@ -5228,31 +5621,33 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_file(
         Err(e) => return e,
     };
 
-    let mut output = match File::create(output_path) {
-        Ok(f) => f,
-        Err(_) => return FFIError::Failed as i32,
-    };
-
     let policy = &StandardPolicy::new();
     let helper = DecryptAndVerifyHelper {
         decrypt_cert: decrypt_cert_ref,
         verify_cert: verify_cert_ref,
         policy,
+        at,
         signer_fp: None,
         signature_creation_epoch: None,
+        hash_algo: None,
     };
 
     let mut decryptor = match DecryptorBuilder::from_file(input_path) {
-        Ok(builder) => match builder.with_policy(policy, None, helper) {
+        Ok(builder) => match builder.with_policy(policy, at, helper) {
             Ok(d) => d,
-            Err(_) => return FFIError::Failed as i32,
+            Err(e) => return fail_with(FFIError::Failed, e),
         },
-        Err(_) => return FFIError::Invalid as i32,
+        Err(e) => return fail_with(FFIError::Invalid, e),
     };
 
-    if std::io::copy(&mut decryptor, &mut output).is_err() {
+    let mut output = match File::create(output_path) {
+        Ok(f) => f,
+        Err(e) => return fail_with(FFIError::Failed, e),
+    };
+
+    if let Err(e) = std::io::copy(&mut decryptor, &mut output) {
         remove_partial_output(output_path);
-        return FFIError::Failed as i32;
+        return fail_with(FFIError::Failed, e);
     }
 
     let helper = decryptor.into_helper();
@@ -5260,14 +5655,19 @@ pub unsafe extern "C" fn pgp_decrypt_and_verify_file(
         Some(fp) => fp,
         None => {
             remove_partial_output(output_path);
+            set_last_error("No valid signature");
             return FFIError::Failed as i32;
         }
     };
-    if !signature_creation_epoch.is_null() {
-        *signature_creation_epoch = helper.signature_creation_epoch.unwrap_or(0);
-    }
 
-    write_c_string(&fp, fingerprint_out)
+    write_verify_metadata(
+        Some(&fp),
+        helper.signature_creation_epoch,
+        helper.hash_algo,
+        fingerprint_out,
+        signature_creation_epoch,
+        hash_algo_out,
+    )
 }
 
 #[cfg(test)]
@@ -9169,6 +9569,206 @@ mod tests {
                 FFIError::Null as i32
             );
 
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn last_error_message_records_and_clears_errors() {
+        unsafe {
+            let mut msg: *mut libc::c_char = ptr::null_mut();
+            let invalid = CString::new("not a cert").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_from_armored(invalid.as_ptr(), &mut cert),
+                FFIError::Invalid as i32
+            );
+            assert_eq!(pgp_last_error_message(&mut msg), FFIError::Ok as i32);
+            let err_text = to_owned_c_string(msg);
+            assert!(!err_text.is_empty());
+
+            let uid = CString::new("error-reset@example.org").unwrap();
+            assert_eq!(
+                pgp_key_generate(uid.as_ptr(), &mut cert),
+                FFIError::Ok as i32
+            );
+            let mut ok_msg: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_last_error_message(&mut ok_msg), FFIError::Ok as i32);
+            assert_eq!(to_owned_c_string(ok_msg), "");
+            pgp_certificate_free(cert);
+        }
+    }
+
+    #[test]
+    fn verify_ex_reports_hash_algo_and_honors_reference_time() {
+        unsafe {
+            let uid = CString::new("ex-verify@example.org").unwrap();
+            let mut cert: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_key_generate(uid.as_ptr(), &mut cert),
+                FFIError::Ok as i32
+            );
+
+            let mut expiring: *mut Certificate = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_set_expiry(cert, 60, &mut expiring),
+                FFIError::Ok as i32
+            );
+
+            let plain = CString::new("timestamped payload").unwrap();
+            let mut signed: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_string(expiring, plain.as_ptr(), &mut signed),
+                FFIError::Ok as i32
+            );
+
+            let mut pt: *mut libc::c_char = ptr::null_mut();
+            let mut fp: *mut libc::c_char = ptr::null_mut();
+            let mut signed_at: i64 = 0;
+            let mut hash_algo: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_string_ex(
+                    expiring,
+                    signed,
+                    0,
+                    &mut pt,
+                    &mut fp,
+                    &mut signed_at,
+                    &mut hash_algo,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(pt), "timestamped payload");
+            assert_eq!(to_owned_c_string(fp).len(), 40);
+            assert!(signed_at > 0);
+            assert_ne!(hash_algo, 0);
+
+            // Reference time after key expiry still verifies a signature made
+            // while the key was alive (historical signature validity).
+            let after_expiry_epoch = signed_at + 3600;
+            let mut pt_hist: *mut libc::c_char = ptr::null_mut();
+            let mut hist_hash: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_string_ex(
+                    expiring,
+                    signed,
+                    after_expiry_epoch,
+                    &mut pt_hist,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut hist_hash,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_eq!(to_owned_c_string(pt_hist), "timestamped payload");
+            assert_ne!(hist_hash, 0);
+
+            // Reference time before signature creation (beyond skew tolerance) fails.
+            let past_epoch = signed_at - 3600;
+            let mut pt_past: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_verify_string_ex(
+                    expiring,
+                    signed,
+                    past_epoch,
+                    &mut pt_past,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Failed as i32
+            );
+            assert!(pt_past.is_null());
+
+            let mut err_out: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(pgp_last_error_message(&mut err_out), FFIError::Ok as i32);
+            assert!(!to_owned_c_string(err_out).is_empty());
+
+            // Negative at_epoch is rejected as Invalid.
+            assert_eq!(
+                pgp_certificate_verify_string_ex(
+                    expiring,
+                    signed,
+                    -1,
+                    &mut pt_past,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Invalid as i32
+            );
+
+            // Same reference time check for cleartext + detached.
+            let mut cleartext: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_cleartext(expiring, plain.as_ptr(), &mut cleartext),
+                FFIError::Ok as i32
+            );
+            let mut clear_pt: *mut libc::c_char = ptr::null_mut();
+            let mut clear_hash: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_cleartext_ex(
+                    expiring,
+                    cleartext,
+                    signed_at + 10,
+                    &mut clear_pt,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut clear_hash,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_ne!(clear_hash, 0);
+            libc::free(clear_pt as *mut libc::c_void);
+            assert_eq!(
+                pgp_certificate_verify_cleartext_ex(
+                    expiring,
+                    cleartext,
+                    past_epoch,
+                    &mut clear_pt,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Failed as i32
+            );
+            libc::free(cleartext as *mut libc::c_void);
+
+            let mut detached: *mut libc::c_char = ptr::null_mut();
+            assert_eq!(
+                pgp_certificate_sign_detached(expiring, plain.as_ptr(), &mut detached),
+                FFIError::Ok as i32
+            );
+            let mut det_hash: u8 = 0;
+            assert_eq!(
+                pgp_certificate_verify_detached_ex(
+                    expiring,
+                    plain.as_ptr(),
+                    detached,
+                    after_expiry_epoch,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut det_hash,
+                ),
+                FFIError::Ok as i32
+            );
+            assert_ne!(det_hash, 0);
+            assert_eq!(
+                pgp_certificate_verify_detached_ex(
+                    expiring,
+                    plain.as_ptr(),
+                    detached,
+                    past_epoch,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                FFIError::Failed as i32
+            );
+
+            libc::free(detached as *mut libc::c_void);
+            libc::free(signed as *mut libc::c_void);
+            pgp_certificate_free(expiring);
             pgp_certificate_free(cert);
         }
     }
