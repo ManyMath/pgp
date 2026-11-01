@@ -29,10 +29,10 @@ Development code; neither package is published to pub.dev yet.
 
 | Host | Status |
 |---|---|
-| Linux | Working: CLI, tests and the Flutter example's integration test |
-| Android | Working: example integration test on an x86_64 emulator (API 36); builds arm64-v8a, armeabi-v7a, x86_64 |
+| Linux | Working: CLI, tests, the example integration test and the payload gate (Ubuntu 24.04, also WSL2) |
+| Android | Working: example integration test on an x86_64 emulator (API 36); the payload gate builds arm64-v8a, armeabi-v7a and x86_64 |
 | macOS | Working: CLI, tests and the example integration test (arm64) |
-| iOS | Builds (device, no codesign); not yet run |
+| iOS | Working: example integration test on an iPhone 16 Pro simulator; device build without codesigning |
 | Windows | Working: Dart tests and the example integration test (x64, CNG backend) |
 | Web | Not supported (no `dart:ffi`) |
 
