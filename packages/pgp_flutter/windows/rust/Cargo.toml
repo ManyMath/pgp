@@ -1,0 +1,25 @@
+[package]
+name = "pgp-ffi-windows"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "pgp-ffi on the Windows CNG backend, built by pgp_flutter's cargokit."
+license = "MIT"
+repository = "https://github.com/ManyMath/pgp-dart"
+
+# Same C ABI and library name as pgp-ffi. The default vendored OpenSSL needs a
+# native perl and NASM to build with MSVC; CNG needs nothing beyond the OS.
+[lib]
+name = "pgp_ffi"
+path = "lib.rs"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+pgp-ffi-core = { package = "pgp-ffi", path = "../../rust", default-features = false, features = ["crypto-cng"] }
+
+[profile.release]
+panic = "abort"
+strip = true
+lto = true
+opt-level = "z"
+codegen-units = 1

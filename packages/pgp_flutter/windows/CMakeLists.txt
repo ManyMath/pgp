@@ -10,7 +10,9 @@ project(${PROJECT_NAME} LANGUAGES CXX)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cargokit/cmake/cargokit.cmake")
 
-apply_cargokit(${PROJECT_NAME} ../rust pgp_ffi pgp_free)
+# windows/rust wraps ../rust with the CNG backend, so Windows builds need no
+# perl or NASM for OpenSSL.
+apply_cargokit(${PROJECT_NAME} rust pgp_ffi pgp_free)
 
 set(pgp_flutter_bundled_libraries
   "${${PROJECT_NAME}_cargokit_lib}"

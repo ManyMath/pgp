@@ -33,9 +33,12 @@ flutter test integration_test -d <device-id>
 ## Requirements
 
 - Rust (`rustup`). There are no precompiled binaries yet.
-- perl, make and a C compiler: the crate builds OpenSSL from source and links
-  it statically (the `crypto-openssl-vendored` feature), so apps need no
-  system OpenSSL.
+- perl, make and a C compiler on Android, iOS, Linux and macOS: the crate
+  builds OpenSSL from source and links it statically (the
+  `crypto-openssl-vendored` feature), so apps need no system OpenSSL.
+- Windows builds use Sequoia's CNG backend through `windows/rust`, which wraps
+  the crate with the `crypto-cng` feature, so they need only the Visual Studio
+  toolchain Flutter already requires.
 - iOS 13 or later; macOS 10.15 or later.
 
 See [`rust/README.md`](rust/README.md) for the crate's backends.
