@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:pgp/pgp.dart';
+import 'package:pgp_dart/pgp_dart.dart';
 import 'package:test/test.dart';
 
 void main() {

@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:pgp/pgp.dart';
+import 'package:pgp_dart/pgp_dart.dart';
 
 void main() {
   final pgp = PGP();

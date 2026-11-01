@@ -1,16 +1,43 @@
-name: pgp
-description: OpenPGP and Sequoia bindings for Dart.
-version: 0.0.1-dev.9
-repository: https://github.com/ManyMath/pgp-dart
-publish_to: none # development code, see README status
+name: pgp_workspace
+publish_to: none
 
+# Dart pub workspace root. Member packages set `resolution: workspace` and
+# share a single lockfile. Melos drives multi-package tooling on top of this.
 environment:
-  sdk: ^3.6.0-0
+  sdk: ^3.10.0
 
-dependencies:
-  ffi: ^2.1.3
+workspace:
+  - packages/pgp_dart
 
 dev_dependencies:
-  ffigen: ^20.0.0
-  lints: ^6.0.0
-  test: ^1.24.0
+  melos: ^7.0.0
+
+# Melos 7 reads its configuration from here (the pub-workspace root). Scripts
+# mirror CI and use the right tool per package (dart vs flutter).
+melos:
+  name: pgp
+  scripts:
+    analyze:
+      description: Analyze all packages.
+      run: dart analyze packages/pgp_dart && flutter analyze packages/pgp_flutter
+    format:
+      description: Check Dart formatting.
+      run: >-
+        dart format --output none --set-exit-if-changed
+        packages/pgp_dart packages/pgp_flutter/lib packages/pgp_flutter/test
+        packages/pgp_flutter/example/lib packages/pgp_flutter/example/integration_test
+    format:fix:
+      description: Apply Dart formatting.
+      run: >-
+        dart format
+        packages/pgp_dart packages/pgp_flutter/lib packages/pgp_flutter/test
+        packages/pgp_flutter/example/lib packages/pgp_flutter/example/integration_test
+    test:
+      description: Run Dart and Flutter tests.
+      run: dart test packages/pgp_dart && flutter test packages/pgp_flutter/test
+    native:build:
+      description: Build the pgp_ffi shared library (for CLI/dev use).
+      run: cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
+    native:test:
+      description: Run the Rust crate tests.
+      run: cargo test --lib --manifest-path packages/pgp_flutter/rust/Cargo.toml
