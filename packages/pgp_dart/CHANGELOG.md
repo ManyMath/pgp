@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Renamed the package from `pgp` to `pgp_dart` and moved it to
+  `packages/pgp_dart` in a workspace with `pgp_flutter`, which now holds the
+  `pgp-ffi` crate and builds it with cargokit. The loader also finds the
+  library a Flutter app bundles, honors `PGP_DART_LIB` and
+  `nativeLibraryOverridePath`, and searches the crate's build output from the
+  current directory upward. Added `ensureNativeLibrary`.
+
 - Removed secret-key export printing from the README quickstart and example,
   and added a status note: development code, no pub.dev release.
 
