@@ -1,4 +1,4 @@
-## Unreleased
+## 0.0.1-dev.10
 
 - Renamed the package from `pgp` to `pgp_dart` and moved it to
   `packages/pgp_dart` in a workspace with `pgp_flutter`, which now holds the

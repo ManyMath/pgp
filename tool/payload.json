@@ -1,0 +1,90 @@
+{
+  "dart_sdk": "3.13.2",
+  "prepare": [
+    "python3",
+    "tool/stage_candidate.py"
+  ],
+  "packages": [
+    {
+      "name": "pgp_dart",
+      "path": "packages/pgp_dart",
+      "required": [
+        "LICENSE",
+        "lib/pgp_dart.dart",
+        "lib/src/pgp-ffi_bindings_generated.dart"
+      ]
+    },
+    {
+      "name": "pgp_flutter",
+      "path": "packages/pgp_flutter",
+      "required": [
+        "LICENSE",
+        "rust/Cargo.toml",
+        "rust/src/lib.rs",
+        "rust/LICENSE",
+        "rust/pgp-ffi.h",
+        "windows/rust/Cargo.toml",
+        "windows/rust/lib.rs",
+        "cargokit/cmake/cargokit.cmake",
+        "cargokit/VENDOR_PROVENANCE.json"
+      ],
+      "contracts": {
+        "linux/CMakeLists.txt": "apply_cargokit(${PROJECT_NAME} ../rust pgp_ffi",
+        "windows/CMakeLists.txt": "apply_cargokit(${PROJECT_NAME} rust pgp_ffi",
+        "windows/rust/Cargo.toml": "path = \"../../rust\", default-features = false, features = [\"crypto-cng\"]",
+        "android/build.gradle": "manifestDir = \"../rust\"",
+        "ios/pgp_flutter.podspec": "build_pod.sh\" ../rust pgp_ffi",
+        "macos/pgp_flutter.podspec": "build_pod.sh\" ../rust pgp_ffi"
+      },
+      "provenance": [
+        "cargokit/VENDOR_PROVENANCE.json"
+      ]
+    }
+  ],
+  "flutter_package": "pgp_flutter",
+  "dart_package": "pgp_dart",
+  "hosted_dart_constraint": "^0.0.1-dev.10",
+  "library_name": "libpgp_ffi.so",
+  "library_environment": "PGP_DART_LIB",
+  "flutter_main": "import 'package:flutter/material.dart';\nimport 'package:pgp_flutter/pgp_flutter.dart';\nFuture<void> main() async { WidgetsFlutterBinding.ensureInitialized(); final backend = await PgpFlutter.ensureInitialized(); runApp(MaterialApp(home: Text(backend))); }\n",
+  "dart_main": "import 'dart:ffi';\nimport 'dart:io';\nimport 'package:ffi/ffi.dart';\nimport 'package:pgp_dart/pgp_dart.dart';\n\n// Every loaded module named [name] (Windows: the process module list).\nList<String> windowsModules(String name) {\n  final kernel32 = DynamicLibrary.open('kernel32.dll');\n  final process = kernel32.lookupFunction<IntPtr Function(), int Function()>('GetCurrentProcess');\n  final enumModules = kernel32.lookupFunction<Int32 Function(IntPtr, Pointer<IntPtr>, Uint32, Pointer<Uint32>), int Function(int, Pointer<IntPtr>, int, Pointer<Uint32>)>('K32EnumProcessModules');\n  final fileName = kernel32.lookupFunction<Uint32 Function(IntPtr, Pointer<Utf16>, Uint32), int Function(int, Pointer<Utf16>, int)>('GetModuleFileNameW');\n  const capacity = 4096, pathCapacity = 32768;\n  final modules = calloc<IntPtr>(capacity), needed = calloc<Uint32>(), path = calloc<Uint16>(pathCapacity).cast<Utf16>();\n  try {\n    if (enumModules(process(), modules, capacity * sizeOf<IntPtr>(), needed) == 0) throw StateError('K32EnumProcessModules failed');\n    final count = needed.value ~/ sizeOf<IntPtr>();\n    if (count > capacity) throw StateError('module list truncated: $count');\n    final found = <String>[];\n    for (var i = 0; i < count; i++) {\n      final length = fileName(modules[i], path, pathCapacity);\n      if (length == 0 || length >= pathCapacity) throw StateError('GetModuleFileNameW failed');\n      final value = path.toDartString(length: length);\n      if (value.split(r'\\').last.toLowerCase() == name) found.add(value);\n    }\n    return found;\n  } finally {\n    calloc.free(modules); calloc.free(needed); calloc.free(path);\n  }\n}\n\nString windowsPath(String path) => (path.startsWith(r'\\\\?\\') ? path.substring(4) : path).toLowerCase();\n\n// The exact bundled file, and only it, is the loaded library.\nvoid expectExactLibrary(String expected) {\n  if (Platform.isWindows) {\n    final modules = windowsModules('pgp_ffi.dll');\n    if (modules.length != 1 || windowsPath(modules.single) != windowsPath(expected)) throw StateError('unexpected native module: $modules');\n    return;\n  }\n  final mappings = File('/proc/self/maps').readAsLinesSync().where((line) => line.contains('libpgp_ffi.so')).toList();\n  if (mappings.isEmpty || mappings.any((line) => !line.endsWith(' $expected'))) throw StateError('unexpected native mapping: $mappings');\n}\n\n// Null-tolerant C ABI entry points that need no certificate.\nvoid checkAbi(String path) {\n  final lib = DynamicLibrary.open(path);\n  final free = lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('pgp_free');\n  final certificateFree = lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('pgp_certificate_free');\n  free(nullptr);\n  certificateFree(nullptr);\n}\n\nvoid main() {\n  final expected = File(Platform.environment['PGP_DART_LIB']!).resolveSymbolicLinksSync();\n  ensureNativeLibrary();\n  expectExactLibrary(expected);\n  checkAbi(expected);\n  final pgp = PGP();\n  final cert = pgp.generateKey('payload@example.org');\n  final publicCert = pgp.certificateFromArmored(cert.exportPublicArmored());\n  try {\n    if (cert.decrypt(publicCert.encrypt('payload')) != 'payload') throw StateError('decrypt mismatch');\n    if (publicCert.verify(cert.sign('payload')) != 'payload') throw StateError('verify mismatch');\n    if (publicCert.fingerprint() != cert.fingerprint()) throw StateError('fingerprint mismatch');\n  } finally {\n    publicCert.dispose();\n    cert.dispose();\n  }\n  try {\n    pgp.certificateFromArmored('not a certificate');\n    throw StateError('garbage parsed as a certificate');\n  } on PgpException {\n    // Expected.\n  }\n  expectExactLibrary(expected);\n  print('Exact native library loaded ($expected); null-handle ABI, key generation, encrypt/decrypt, sign/verify and parse errors passed');\n}\n",
+  "rust_toolchain": "stable",
+  "rust_targets": {
+    "linux": [
+      "x86_64-unknown-linux-gnu"
+    ],
+    "macos": [
+      "{host_arch}-apple-darwin"
+    ],
+    "windows": [
+      "{host_arch}-pc-windows-msvc"
+    ],
+    "apk": [
+      "aarch64-linux-android",
+      "armv7-linux-androideabi",
+      "x86_64-linux-android"
+    ]
+  },
+  "runtime_libraries": {
+    "linux": {
+      "name": "libpgp_ffi.so",
+      "bundle_dir": "bundle/lib"
+    },
+    "windows": {
+      "name": "pgp_ffi.dll",
+      "bundle_dir": "runner/Debug"
+    }
+  },
+  "android": {
+    "rust_toolchain": "stable",
+    "ndk": "28.2.13676358",
+    "platform": "android-36",
+    "build_tools": "36.0.0",
+    "library": "libpgp_ffi.so",
+    "apk_abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86_64"
+    ]
+  }
+}
