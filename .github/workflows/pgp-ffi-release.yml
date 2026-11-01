@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --manifest-path packages/pgp_flutter/rust/Cargo.toml
+      - run: cargo build --features header --manifest-path packages/pgp_flutter/rust/Cargo.toml
       - name: Fail if cbindgen output drifted from the committed header
         run: git diff --exit-code -- packages/pgp_flutter/rust/pgp-ffi.h
 

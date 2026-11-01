@@ -20,7 +20,7 @@ RUSTSEC-2023-0071 (`rsa`, no fix) out of the shipped library. They remain in
 
 ## Development
 - Install `cbindgen`: `cargo install --force cbindgen`.
-- `cargo build` regenerates `pgp-ffi.h` automatically via `build.rs`.
+- `cargo build --features header` regenerates `pgp-ffi.h` via `build.rs`.
 - To run the C smoke test:
   - `cargo build`
   - `gcc test.c -I. -L./target/debug -lpgp_ffi -o test_runner`

@@ -40,9 +40,11 @@ crypto-openssl = ["sequoia-openpgp/crypto-openssl"]
 # OpenSSL (Windows, Android, iOS, macOS). Needs perl, make and a C compiler.
 crypto-openssl-vendored = ["crypto-openssl", "dep:openssl-sys", "openssl-sys/vendored"]
 crypto-nettle = ["sequoia-openpgp/crypto-nettle"]
+# Regenerate pgp-ffi.h during the build.
+header = ["dep:cbindgen"]
 
 [build-dependencies]
-cbindgen = "0.27.0"
+cbindgen = { version = "0.27.0", optional = true }
 
 [profile.release]
 # Abort on panic: unwinding across the C ABI (extern "C") boundary is undefined
