@@ -31,6 +31,7 @@ jobs:
           packages/pgp_dart packages/pgp_flutter/lib packages/pgp_flutter/test
           packages/pgp_flutter/example/lib packages/pgp_flutter/example/integration_test
       - run: dart analyze packages/pgp_dart
+      - run: python3 tool/check_windows_wrapper.py
       - run: flutter analyze packages/pgp_flutter
       - run: cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
       - run: dart test packages/pgp_dart
@@ -80,7 +81,7 @@ jobs:
   # the monorepo, fresh `flutter create` app), which the example build above
   # can't catch.
   consumer:
-    name: Consumer build & crate package
+    name: Consumer build & publish dry-run
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +97,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config
       - run: tool/consumer_build.sh linux apk
+      # Both packages keep publish_to: none; dry-run staged copies without it.
+      - name: Publish dry-run (pgp_dart, pgp_flutter)
+        run: |
+          stage="$(mktemp -d)"
+          git archive HEAD | tar -x -C "$stage"
+          git -C "$stage" init -q
+          python3 tool/stage_candidate.py --staged-root "$stage" --revision "$GITHUB_SHA"
+          (cd "$stage" && flutter pub get)
+          (cd "$stage/packages/pgp_dart" && dart pub publish --dry-run)
+          (cd "$stage/packages/pgp_flutter" && flutter pub publish --dry-run)
       - run: flutter pub get
       - name: Package the crate
         run: cargo publish --dry-run --manifest-path packages/pgp_flutter/rust/Cargo.toml
