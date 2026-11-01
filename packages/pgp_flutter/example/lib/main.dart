@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:pgp_flutter/pgp_flutter.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  PgpFlutter.ensureInitialized();
+  await PgpFlutter.ensureInitialized();
   runApp(const PgpExampleApp());
 }
 

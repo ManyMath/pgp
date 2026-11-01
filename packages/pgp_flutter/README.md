@@ -10,7 +10,7 @@ app, then re-exports the full `pgp_dart` API.
 ```dart
 import 'package:pgp_flutter/pgp_flutter.dart';
 
-PgpFlutter.ensureInitialized();
+await PgpFlutter.ensureInitialized();
 final pgp = PGP();
 final cert = pgp.generateKey('someone@example.org');
 final publicCert = pgp.certificateFromArmored(cert.exportPublicArmored());

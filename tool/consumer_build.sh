@@ -66,9 +66,9 @@ cat > lib/main.dart <<'DART'
 import 'package:flutter/material.dart';
 import 'package:pgp_flutter/pgp_flutter.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  PgpFlutter.ensureInitialized();
+  await PgpFlutter.ensureInitialized();
   final pgp = PGP();
   final cert = pgp.generateKey('consumer@example.org');
   final fingerprint = cert.fingerprint();

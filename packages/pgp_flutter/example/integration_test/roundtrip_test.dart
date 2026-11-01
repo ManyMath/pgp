@@ -7,7 +7,9 @@ import 'package:pgp_flutter_example/main.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  test('the bundled library loads', PgpFlutter.ensureInitialized);
+  test('the bundled library loads', () async {
+    expect(await PgpFlutter.ensureInitialized(), 'ffi');
+  });
 
   test('encrypt/decrypt and sign/verify round-trip', () {
     final result = roundTrip('integration');

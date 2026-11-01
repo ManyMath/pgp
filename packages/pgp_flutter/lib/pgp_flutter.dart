@@ -6,7 +6,7 @@
 /// ```dart
 /// import 'package:pgp_flutter/pgp_flutter.dart';
 ///
-/// PgpFlutter.ensureInitialized();
+/// await PgpFlutter.ensureInitialized();
 /// final pgp = PGP();
 /// final cert = pgp.generateKey('someone@example.org');
 /// ```
@@ -20,8 +20,12 @@ export 'package:pgp_dart/pgp_dart.dart';
 /// Flutter-side conveniences over `pgp_dart`.
 abstract final class PgpFlutter {
   /// Loads the bundled `pgp_ffi` library now, so a missing or broken build
-  /// fails at startup rather than on the first PGP call.
-  static void ensureInitialized() => ensureNativeLibrary();
+  /// fails at startup rather than on the first PGP call. Returns the name of
+  /// the backend in use (`ffi`), like the other ManyMath Flutter plugins.
+  static Future<String> ensureInitialized() async {
+    ensureNativeLibrary();
+    return 'ffi';
+  }
 
   /// Parses an ASCII-armored certificate bundled as a Flutter asset.
   ///

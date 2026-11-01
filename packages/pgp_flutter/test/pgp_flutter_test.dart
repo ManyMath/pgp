@@ -19,7 +19,7 @@ class _FakeBundle extends CachingAssetBundle {
 
 bool _nativeAvailable() {
   try {
-    PgpFlutter.ensureInitialized();
+    ensureNativeLibrary();
     return true;
   } on Object {
     return false;
@@ -30,6 +30,10 @@ void main() {
   // The native tests need a host build of the crate:
   // cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
   final skip = _nativeAvailable() ? false : 'pgp_ffi is not built';
+
+  test('ensureInitialized reports the ffi backend', () async {
+    expect(await PgpFlutter.ensureInitialized(), 'ffi');
+  }, skip: skip);
 
   test('certificateFromAsset parses an armored certificate', () async {
     final pgp = PGP();
