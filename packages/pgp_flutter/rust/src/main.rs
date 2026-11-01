@@ -4,11 +4,11 @@ use sequoia_openpgp as openpgp;
 
 use crate::openpgp::cert::prelude::*;
 use crate::openpgp::crypto::SessionKey;
-use crate::openpgp::types::SymmetricAlgorithm;
-use crate::openpgp::serialize::stream::{Armorer, Message, Encryptor, LiteralWriter};
-use crate::openpgp::parse::{Parse, stream::*};
+use crate::openpgp::parse::{stream::*, Parse};
 use crate::openpgp::policy::Policy;
 use crate::openpgp::policy::StandardPolicy as P;
+use crate::openpgp::serialize::stream::{Armorer, Encryptor, LiteralWriter, Message};
+use crate::openpgp::types::SymmetricAlgorithm;
 use sequoia_openpgp::serialize::Marshal;
 
 const MESSAGE: &str = "Hello, world!"; // Message to encrypt and decrypt.
@@ -121,8 +121,7 @@ fn decrypt(
     };
 
     // Now, create a decryptor with a helper using the given Certs.
-    let mut decryptor = DecryptorBuilder::from_bytes(ciphertext)?
-        .with_policy(p, None, helper)?;
+    let mut decryptor = DecryptorBuilder::from_bytes(ciphertext)?.with_policy(p, None, helper)?;
 
     // Decrypt the data.
     io::copy(&mut decryptor, sink)?;
@@ -136,10 +135,7 @@ struct Helper<'a> {
 }
 
 impl<'a> VerificationHelper for Helper<'a> {
-    fn get_certs(
-        &mut self,
-        _ids: &[openpgp::KeyHandle],
-    ) -> openpgp::Result<Vec<openpgp::Cert>> {
+    fn get_certs(&mut self, _ids: &[openpgp::KeyHandle]) -> openpgp::Result<Vec<openpgp::Cert>> {
         // Return public keys for signature verification here.
         Ok(Vec::new())
     }
