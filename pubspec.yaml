@@ -8,6 +8,7 @@ environment:
 
 workspace:
   - packages/pgp_dart
+  - packages/pgp_flutter
 
 dev_dependencies:
   melos: ^7.0.0
