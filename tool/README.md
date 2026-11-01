@@ -23,7 +23,10 @@ bindgen). Windows builds use
 `packages/pgp_flutter/windows/rust`, which wraps the crate with the CNG backend
 and needs only the MSVC toolchain. The gate sets RUSTUP_WINDOWS_PATH_ADD_BIN=1
 for its children: rustup proxies installed as symlinks cannot be started by
-processes that enforce redirection trust (os error 448).
+processes that enforce redirection trust (os error 448). The `prepare` step runs
+`python3`, which must resolve to a real Python on Windows, not the Microsoft
+Store alias. The gate copies the working tree, so run it from a checkout
+without example build output; Windows build paths under it exceed MAX_PATH.
 
 Android APK consumers: set ANDROID_SDK_ROOT to an SDK with platform 36,
 build-tools 36.0.0 and NDK 28.2.13676358 installed, then run the gate with
