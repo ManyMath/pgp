@@ -9,7 +9,7 @@ This is a [melos](https://melos.invertase.dev) monorepo:
 |---|---|
 | [`packages/pgp_dart`](packages/pgp_dart) | Pure Dart (no Flutter); works in CLI tools. Reaches Sequoia over `dart:ffi`. |
 | [`packages/pgp_flutter`](packages/pgp_flutter) | Flutter plugin. Builds the native library automatically (via cargokit) and re-exports the `pgp_dart` API. |
-| [`packages/pgp_flutter/rust`](packages/pgp_flutter/rust) | The `pgp-ffi` Rust crate (the C ABI behind the bindings), kept inside `pgp_flutter` so it ships with that package. Links a statically built OpenSSL by default. |
+| [`packages/pgp_flutter/rust`](packages/pgp_flutter/rust) | The `pgp-ffi` Rust crate (the C ABI behind the bindings), kept inside `pgp_flutter` so it ships with that package. Links a statically built OpenSSL by default; Windows builds wrap it with Sequoia's CNG backend (`windows/rust`). |
 
 ## Quick start (Dart CLI)
 
@@ -33,7 +33,7 @@ Development code; neither package is published to pub.dev yet.
 | Android | Working: example integration test on an x86_64 emulator (API 36); builds arm64-v8a, armeabi-v7a, x86_64 |
 | macOS | Working: CLI, tests and the example integration test (arm64) |
 | iOS | Builds (device, no codesign); not yet run |
-| Windows | Not yet verified |
+| Windows | Working: Dart tests and the example integration test (x64, CNG backend) |
 | Web | Not supported (no `dart:ffi`) |
 
 ## Development
@@ -49,7 +49,15 @@ dart run melos run test           # Dart + Flutter tests
 dart run melos run native:test    # Rust crate tests
 ```
 
-`tool/consumer_build.sh linux apk` builds a fresh Flutter app against the two
-packages exported from `HEAD`, the way a pub.dev consumer gets them.
 `flutter test integration_test -d <device>` (from
 `packages/pgp_flutter/example`) runs the on-device round-trip tests.
+
+## Package candidates and verification
+
+The native crate lives in `packages/pgp_flutter/rust` so its complete source
+ships in the Flutter publication archive. See [the payload gate](tool/README.md)
+for actual pub archive checks, fresh consumer builds and native loading checks:
+
+```sh
+python3 tool/native_payload.py --config tool/payload.json --mode candidate --output /tmp/pgp-candidate
+```
