@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:pgp_dart/pgp_dart.dart';
@@ -8,6 +9,25 @@ void main() {
   final pgp = PGP();
 
   test('ensureNativeLibrary loads the library', ensureNativeLibrary);
+
+  test('a PGP_DART_LIB that does not load is an error', () async {
+    final dir = Directory.systemTemp.createTempSync('pgp_dart_load');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final script = File('${dir.path}/load.dart')
+      ..writeAsStringSync(
+        "import 'package:pgp_dart/pgp_dart.dart';\n"
+        'void main() => ensureNativeLibrary();\n',
+      );
+    final missing = '${dir.path}/missing/library';
+    final packages = (await Isolate.packageConfig)!.toFilePath();
+    final result = await Process.run(
+      Platform.resolvedExecutable,
+      ['--packages=$packages', script.path],
+      environment: {'PGP_DART_LIB': missing},
+    );
+    expect(result.exitCode, isNot(0));
+    expect(result.stderr, contains('from $missing'));
+  });
 
   test('generateKey returns a certificate handle', () {
     final cert = pgp.generateKey('someone@example.org');

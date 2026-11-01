@@ -1,8 +1,9 @@
 import 'dart:ffi';
 import 'dart:io';
 
-/// Explicit path to the native `pgp_ffi` library. Highest priority; set it
-/// before the first [PGP] call.
+/// Explicit path to the native `pgp_ffi` library. Set it before the first
+/// [PGP] call. When it (or the `PGP_DART_LIB` environment variable) is set,
+/// no other location is tried.
 String? nativeLibraryOverridePath;
 
 String get _fileName => switch (Platform.operatingSystem) {
@@ -15,23 +16,20 @@ String get _fileName => switch (Platform.operatingSystem) {
 };
 
 Iterable<String> _candidates() sync* {
-  if (nativeLibraryOverridePath != null) yield nativeLibraryOverridePath!;
-  final fromEnv = Platform.environment['PGP_DART_LIB'];
-  if (fromEnv != null && fromEnv.isNotEmpty) yield fromEnv;
-  // Resolved via the OS loader path or the Flutter app bundle (pgp_flutter).
-  yield _fileName;
   // pgp_flutter force-loads the static library into its framework on Apple
   // platforms; the loader resolves the framework binary by its short path.
   if (Platform.isMacOS || Platform.isIOS) {
     yield 'pgp_flutter.framework/pgp_flutter';
   }
+  // A Flutter desktop bundle, or a CLI shipped next to the library.
   final executableDir = File(Platform.resolvedExecutable).parent.path;
-  yield '$executableDir/$_fileName';
   yield '$executableDir/lib/$_fileName';
+  yield '$executableDir/$_fileName';
+  // The OS loader path, which covers Android's jniLibs.
+  yield _fileName;
   // Developer builds of the in-repo crate, searched from the cwd upward.
   var dir = Directory.current.absolute;
   for (var i = 0; i < 6; i++) {
-    yield '${dir.path}/$_fileName';
     for (final profile in ['release', 'debug']) {
       yield '${dir.path}/packages/pgp_flutter/rust/target/$profile/$_fileName';
     }
@@ -42,6 +40,22 @@ Iterable<String> _candidates() sync* {
 }
 
 DynamicLibrary _loadLibrary() {
+  // An explicit path must load; falling back to another copy would hide it.
+  final fromEnv = Platform.environment['PGP_DART_LIB'];
+  final explicit =
+      nativeLibraryOverridePath ??
+      (fromEnv != null && fromEnv.isNotEmpty ? fromEnv : null);
+  if (explicit != null) {
+    try {
+      return DynamicLibrary.open(explicit);
+    } catch (error) {
+      throw ArgumentError(
+        'Failed to load the pgp_ffi native library from '
+        '$explicit: $error',
+      );
+    }
+  }
+
   final attempted = <String>[];
   Object? lastError;
   for (final candidate in _candidates()) {

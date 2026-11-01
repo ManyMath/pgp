@@ -70,14 +70,16 @@ cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
 ```
 The artifact lands in `packages/pgp_flutter/rust/target/release/`.
 
-The loader tries, in order: `nativeLibraryOverridePath`, the `PGP_DART_LIB`
-environment variable, the plain library name (the OS search path or a Flutter
-app bundle), the `pgp_flutter` framework on Apple platforms, the executable's
-directory (and its `lib/`), and the crate's `target/{release,debug}` directories
-from the current directory upward, so `dart run` and `dart test` anywhere in
-the repository work without copying anything. If loading fails it throws an
-`ArgumentError` listing every path it tried. Call `ensureNativeLibrary()` to
-load it eagerly.
+If `nativeLibraryOverridePath` or the `PGP_DART_LIB` environment variable is
+set, the loader opens exactly that path and throws if it cannot. Otherwise it
+tries, in order: the `pgp_flutter` framework on Apple platforms, the
+executable's `lib/` directory and the executable's own directory (Flutter
+desktop bundles, or a CLI shipped next to the library), the plain library name
+(the OS search path, which covers Android), and the crate's
+`target/{release,debug}` directories from the current directory upward, so
+`dart run` and `dart test` anywhere in the repository work without copying
+anything. If loading fails it throws an `ArgumentError` listing every path it
+tried. Call `ensureNativeLibrary()` to load it eagerly.
 
 ## Development
 - To generate the `lib/src/pgp-ffi_bindings_generated.dart` bindings for the
