@@ -20,8 +20,9 @@ export 'package:pgp_dart/pgp_dart.dart';
 /// Flutter-side conveniences over `pgp_dart`.
 abstract final class PgpFlutter {
   /// Loads the bundled `pgp_ffi` library now, so a missing or broken build
-  /// fails at startup rather than on the first PGP call. Returns the name of
-  /// the backend in use (`ffi`), like the other ManyMath Flutter plugins.
+  /// fails at startup rather than on the first PGP call; await it, or the
+  /// failure surfaces as an unhandled async error. Returns the name of the
+  /// backend in use (`ffi`), like the other ManyMath Flutter plugins.
   static Future<String> ensureInitialized() async {
     ensureNativeLibrary();
     return 'ffi';
