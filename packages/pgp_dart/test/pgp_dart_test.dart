@@ -7,6 +7,8 @@ import 'package:test/test.dart';
 void main() {
   final pgp = PGP();
 
+  test('ensureNativeLibrary loads the library', ensureNativeLibrary);
+
   test('generateKey returns a certificate handle', () {
     final cert = pgp.generateKey('someone@example.org');
     expect(cert.pointer.address, isNonZero);

@@ -76,3 +76,12 @@ DynamicLibrary _loadLibrary() {
 }
 
 final DynamicLibrary nativeLibrary = _loadLibrary();
+
+/// Loads the native library now rather than on first use.
+///
+/// Throws an [ArgumentError] listing every path tried if it cannot be found.
+void ensureNativeLibrary() {
+  if (!nativeLibrary.providesSymbol('pgp_free')) {
+    throw ArgumentError('The loaded library does not export pgp_free.');
+  }
+}
