@@ -24,17 +24,16 @@
         "rust/LICENSE",
         "rust/pgp-ffi.h",
         "windows/rust/Cargo.toml",
-        "windows/rust/lib.rs",
         "cargokit/cmake/cargokit.cmake",
         "cargokit/VENDOR_PROVENANCE.json"
       ],
       "contracts": {
         "linux/CMakeLists.txt": "apply_cargokit(${PROJECT_NAME} ../rust pgp_ffi",
         "windows/CMakeLists.txt": "apply_cargokit(${PROJECT_NAME} rust pgp_ffi",
-        "windows/rust/Cargo.toml": "path = \"../../rust\", default-features = false, features = [\"crypto-cng\"]",
         "android/build.gradle": "manifestDir = \"../rust\"",
         "ios/pgp_flutter.podspec": "build_pod.sh\" ../rust pgp_ffi",
-        "macos/pgp_flutter.podspec": "build_pod.sh\" ../rust pgp_ffi"
+        "macos/pgp_flutter.podspec": "build_pod.sh\" ../rust pgp_ffi",
+        "windows/rust/Cargo.toml": "path = \"../../rust/src/lib.rs\""
       },
       "provenance": [
         "cargokit/VENDOR_PROVENANCE.json"
