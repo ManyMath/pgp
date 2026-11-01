@@ -13,49 +13,42 @@ import 'dart:ffi' as ffi;
 class PgpFfiBindings {
   /// Holds the symbol lookup function.
   final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName)
-      _lookup;
+  _lookup;
 
   /// The symbols are looked up in [dynamicLibrary].
   PgpFfiBindings(ffi.DynamicLibrary dynamicLibrary)
-      : _lookup = dynamicLibrary.lookup;
+    : _lookup = dynamicLibrary.lookup;
 
   /// The symbols are looked up with [lookup].
   PgpFfiBindings.fromLookup(
-      ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName)
-          lookup)
-      : _lookup = lookup;
+    ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName) lookup,
+  ) : _lookup = lookup;
 
   /// Free a string or byte buffer returned through an `out` parameter.
   ///
   /// # Safety
   /// `ptr` must be null or a buffer this library allocated, freed at most once.
-  void pgp_free(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _pgp_free(
-      ptr,
-    );
+  void pgp_free(ffi.Pointer<ffi.Void> ptr) {
+    return _pgp_free(ptr);
   }
 
   late final _pgp_freePtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'pgp_free');
-  late final _pgp_free =
-      _pgp_freePtr.asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+        'pgp_free',
+      );
+  late final _pgp_free = _pgp_freePtr
+      .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   /// # Safety
   /// `cert` must be non-null and from a `pgp_certificate_*` constructor.
-  void pgp_certificate_free(
-    ffi.Pointer<Certificate> cert,
-  ) {
-    return _pgp_certificate_free(
-      cert,
-    );
+  void pgp_certificate_free(ffi.Pointer<Certificate> cert) {
+    return _pgp_certificate_free(cert);
   }
 
   late final _pgp_certificate_freePtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<Certificate>)>>(
-          'pgp_certificate_free');
+        'pgp_certificate_free',
+      );
   late final _pgp_certificate_free = _pgp_certificate_freePtr
       .asFunction<void Function(ffi.Pointer<Certificate>)>();
 
@@ -67,21 +60,25 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> armored,
     ffi.Pointer<ffi.Pointer<Certificate>> cert,
   ) {
-    return _pgp_certificate_from_armored(
-      armored,
-      cert,
-    );
+    return _pgp_certificate_from_armored(armored, cert);
   }
 
-  late final _pgp_certificate_from_armoredPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_from_armored');
-  late final _pgp_certificate_from_armored =
-      _pgp_certificate_from_armoredPtr.asFunction<
-          int Function(
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_from_armoredPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_from_armored');
+  late final _pgp_certificate_from_armored = _pgp_certificate_from_armoredPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Generate a new certificate with the given user ID.
   ///
@@ -91,19 +88,25 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> user_id,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_key_generate(
-      user_id,
-      new_cert,
-    );
+    return _pgp_key_generate(user_id, new_cert);
   }
 
-  late final _pgp_key_generatePtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>>('pgp_key_generate');
-  late final _pgp_key_generate = _pgp_key_generatePtr.asFunction<
-      int Function(
-          ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_key_generatePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_key_generate');
+  late final _pgp_key_generate = _pgp_key_generatePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Generate a new certificate with the given user ID and key algorithm,
   /// using the same subkey layout as `pgp_key_generate` (a transport-encryption
@@ -117,22 +120,28 @@ class PgpFfiBindings {
     int cipher_suite,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_key_generate_with_cipher_suite(
-      user_id,
-      cipher_suite,
-      new_cert,
-    );
+    return _pgp_key_generate_with_cipher_suite(user_id, cipher_suite, new_cert);
   }
 
-  late final _pgp_key_generate_with_cipher_suitePtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Uint8,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_key_generate_with_cipher_suite');
+  late final _pgp_key_generate_with_cipher_suitePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_key_generate_with_cipher_suite');
   late final _pgp_key_generate_with_cipher_suite =
-      _pgp_key_generate_with_cipher_suitePtr.asFunction<
-          int Function(ffi.Pointer<ffi.Char>, int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_key_generate_with_cipher_suitePtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<ffi.Char>,
+              int,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Export the certificate as an ASCII-armored public key block.
   /// Caller must free `*armored` with `free()`.
@@ -143,21 +152,26 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored,
   ) {
-    return _pgp_certificate_export_public_armored(
-      cert,
-      armored,
-    );
+    return _pgp_certificate_export_public_armored(cert, armored);
   }
 
-  late final _pgp_certificate_export_public_armoredPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_export_public_armored');
+  late final _pgp_certificate_export_public_armoredPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_export_public_armored');
   late final _pgp_certificate_export_public_armored =
-      _pgp_certificate_export_public_armoredPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_export_public_armoredPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Export the certificate as an ASCII-armored secret key block.
   /// Caller must free `*armored` with `free()`.
@@ -168,21 +182,26 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored,
   ) {
-    return _pgp_certificate_export_secret_armored(
-      cert,
-      armored,
-    );
+    return _pgp_certificate_export_secret_armored(cert, armored);
   }
 
-  late final _pgp_certificate_export_secret_armoredPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_export_secret_armored');
+  late final _pgp_certificate_export_secret_armoredPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_export_secret_armored');
   late final _pgp_certificate_export_secret_armored =
-      _pgp_certificate_export_secret_armoredPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_export_secret_armoredPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Export the certificate as an ASCII-armored secret key block.
   /// Caller must free `*armored` with `free()`.
@@ -193,21 +212,26 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored,
   ) {
-    return _pgp_certificate_export_armored(
-      cert,
-      armored,
-    );
+    return _pgp_certificate_export_armored(cert, armored);
   }
 
-  late final _pgp_certificate_export_armoredPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_export_armored');
+  late final _pgp_certificate_export_armoredPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_export_armored');
   late final _pgp_certificate_export_armored =
-      _pgp_certificate_export_armoredPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_export_armoredPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Encrypt `plaintext` to the certificate and write an ASCII-armored message to
   /// `*armored_message`. Caller must free `*armored_message` with `free()`.
@@ -219,22 +243,28 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> plaintext,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored_message,
   ) {
-    return _pgp_certificate_encrypt_string(
-      cert,
-      plaintext,
-      armored_message,
-    );
+    return _pgp_certificate_encrypt_string(cert, plaintext, armored_message);
   }
 
-  late final _pgp_certificate_encrypt_stringPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_encrypt_string');
+  late final _pgp_certificate_encrypt_stringPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_encrypt_string');
   late final _pgp_certificate_encrypt_string =
-      _pgp_certificate_encrypt_stringPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_encrypt_stringPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// List the recipient key IDs an ASCII-armored encrypted message is
   /// addressed to, without decrypting it and without needing any secret key
@@ -252,21 +282,22 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_message_recipient_key_ids(
-      armored_message,
-      out,
-    );
+    return _pgp_message_recipient_key_ids(armored_message, out);
   }
 
-  late final _pgp_message_recipient_key_idsPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_message_recipient_key_ids');
-  late final _pgp_message_recipient_key_ids =
-      _pgp_message_recipient_key_idsPtr.asFunction<
-          int Function(
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_message_recipient_key_idsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_message_recipient_key_ids');
+  late final _pgp_message_recipient_key_ids = _pgp_message_recipient_key_idsPtr
+      .asFunction<
+        int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)
+      >();
 
   /// Recovers the symmetric session key that encrypts an ASCII-armored
   /// message's body, using `cert`'s transport-encryption subkey(s), *without*
@@ -299,16 +330,26 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_message_session_keyPtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_message_session_keyPtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Uint8>)>>('pgp_message_session_key');
-  late final _pgp_message_session_key = _pgp_message_session_keyPtr.asFunction<
-      int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-          ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Uint8>)>();
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Uint8>,
+          )
+        >
+      >('pgp_message_session_key');
+  late final _pgp_message_session_key = _pgp_message_session_keyPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Uint8>,
+        )
+      >();
 
   /// Decrypt an ASCII-armored message using the certificate and write plaintext to
   /// `*plaintext`. Caller must free `*plaintext` with `free()`.
@@ -320,22 +361,28 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> armored_message,
     ffi.Pointer<ffi.Pointer<ffi.Char>> plaintext,
   ) {
-    return _pgp_certificate_decrypt_string(
-      cert,
-      armored_message,
-      plaintext,
-    );
+    return _pgp_certificate_decrypt_string(cert, armored_message, plaintext);
   }
 
-  late final _pgp_certificate_decrypt_stringPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_decrypt_string');
+  late final _pgp_certificate_decrypt_stringPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_decrypt_string');
   late final _pgp_certificate_decrypt_string =
-      _pgp_certificate_decrypt_stringPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_decrypt_stringPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Decrypt an ASCII-armored message using a session key directly (e.g. one
   /// recovered via `pgp_message_session_key`) instead of a certificate's
@@ -364,15 +411,26 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_decrypt_with_session_keyPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Uint8,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_decrypt_with_session_key');
-  late final _pgp_decrypt_with_session_key =
-      _pgp_decrypt_with_session_keyPtr.asFunction<
-          int Function(ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_decrypt_with_session_keyPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_decrypt_with_session_key');
+  late final _pgp_decrypt_with_session_key = _pgp_decrypt_with_session_keyPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<ffi.Char>,
+          int,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Sign `plaintext` with the certificate and write an ASCII-armored signed
   /// message to `*armored_message`. Caller must free `*armored_message` with
@@ -385,22 +443,27 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> plaintext,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored_message,
   ) {
-    return _pgp_certificate_sign_string(
-      cert,
-      plaintext,
-      armored_message,
-    );
+    return _pgp_certificate_sign_string(cert, plaintext, armored_message);
   }
 
-  late final _pgp_certificate_sign_stringPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_sign_string');
-  late final _pgp_certificate_sign_string =
-      _pgp_certificate_sign_stringPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_sign_stringPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_sign_string');
+  late final _pgp_certificate_sign_string = _pgp_certificate_sign_stringPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Verify an ASCII-armored signed message using the certificate and write the
   /// verified plaintext to `*plaintext`. Caller must free `*plaintext` with
@@ -433,22 +496,28 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_verify_stringPtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_certificate_verify_stringPtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_string');
-  late final _pgp_certificate_verify_string =
-      _pgp_certificate_verify_stringPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>();
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('pgp_certificate_verify_string');
+  late final _pgp_certificate_verify_string = _pgp_certificate_verify_stringPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Int64>,
+        )
+      >();
 
   /// Revoke the cert and write the updated cert to `*revoked_cert`.
   ///
@@ -466,25 +535,29 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> message,
     ffi.Pointer<ffi.Pointer<Certificate>> revoked_cert,
   ) {
-    return _pgp_certificate_revoke(
-      cert,
-      reason,
-      message,
-      revoked_cert,
-    );
+    return _pgp_certificate_revoke(cert, reason, message, revoked_cert);
   }
 
-  late final _pgp_certificate_revokePtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_revoke');
-  late final _pgp_certificate_revoke = _pgp_certificate_revokePtr.asFunction<
-      int Function(ffi.Pointer<Certificate>, int, ffi.Pointer<ffi.Char>,
-          ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_revokePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_revoke');
+  late final _pgp_certificate_revoke = _pgp_certificate_revokePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          int,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Report whether `cert` itself has been revoked (via `pgp_certificate_revoke`),
   /// and if so, the reason code and message recorded on the revocation
@@ -515,18 +588,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_revocation_infoPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_revocation_info');
+  late final _pgp_certificate_revocation_infoPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_revocation_info');
   late final _pgp_certificate_revocation_info =
-      _pgp_certificate_revocation_infoPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Uint8>,
-              ffi.Pointer<ffi.Uint8>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_revocation_infoPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Uint8>,
+              ffi.Pointer<ffi.Uint8>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Build a standalone, ASCII-armored revocation certificate for `cert`
   /// *without* applying it: the `gpg --gen-revoke` workflow: generate this
@@ -554,15 +636,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_generate_revocation_armoredPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Uint8,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_generate_revocation_armored');
+  late final _pgp_certificate_generate_revocation_armoredPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_generate_revocation_armored');
   late final _pgp_certificate_generate_revocation_armored =
-      _pgp_certificate_generate_revocation_armoredPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, int, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_generate_revocation_armoredPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              int,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Apply a standalone revocation certificate (produced by
   /// `pgp_certificate_generate_revocation_armored`, or any other RFC 4880
@@ -586,17 +680,25 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_apply_revocation_armoredPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_apply_revocation_armored');
+  late final _pgp_certificate_apply_revocation_armoredPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_apply_revocation_armored');
   late final _pgp_certificate_apply_revocation_armored =
-      _pgp_certificate_apply_revocation_armoredPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_apply_revocation_armoredPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Designate `revoker_cert` as authorized to revoke `cert` on its behalf:
   /// RFC 4880's designated-revoker mechanism (the `gpg --edit-key addrevoker`
@@ -628,17 +730,25 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_add_designated_revokerPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_add_designated_revoker');
+  late final _pgp_certificate_add_designated_revokerPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_add_designated_revoker');
   late final _pgp_certificate_add_designated_revoker =
-      _pgp_certificate_add_designated_revokerPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_add_designated_revokerPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Return one line per designated revoker configured on `cert` (via
   /// `pgp_certificate_add_designated_revoker`): `fingerprint\tsensitive`,
@@ -655,21 +765,26 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_certificate_revocation_keys(
-      cert,
-      out,
-    );
+    return _pgp_certificate_revocation_keys(cert, out);
   }
 
-  late final _pgp_certificate_revocation_keysPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_revocation_keys');
+  late final _pgp_certificate_revocation_keysPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_revocation_keys');
   late final _pgp_certificate_revocation_keys =
-      _pgp_certificate_revocation_keysPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_revocation_keysPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Build a standalone, ASCII-armored revocation certificate for
   /// `target_cert`, signed by `revoker_cert` rather than by `target_cert`
@@ -708,19 +823,29 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_generate_revocation_armored_byPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_generate_revocation_armored_by');
+  late final _pgp_certificate_generate_revocation_armored_byPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_generate_revocation_armored_by');
   late final _pgp_certificate_generate_revocation_armored_by =
-      _pgp_certificate_generate_revocation_armored_byPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>, int,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_generate_revocation_armored_byPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              int,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Cryptographically verify a designated-revoker revocation applied to
   /// `target_cert` (e.g. via `pgp_certificate_apply_revocation_armored` with a
@@ -755,15 +880,25 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_verify_designated_revocationPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>, ffi.Pointer<ffi.Uint8>)>>(
-      'pgp_certificate_verify_designated_revocation');
+  late final _pgp_certificate_verify_designated_revocationPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Uint8>,
+          )
+        >
+      >('pgp_certificate_verify_designated_revocation');
   late final _pgp_certificate_verify_designated_revocation =
-      _pgp_certificate_verify_designated_revocationPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Uint8>)>();
+      _pgp_certificate_verify_designated_revocationPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Uint8>,
+            )
+          >();
 
   /// Set `cert`'s algorithm-preference and features self-signature subpackets
   /// (RFC 4880 5.2.3.7-9/17), writing the updated cert to `*new_cert`; `cert`
@@ -815,22 +950,26 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_set_preferencesPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.UintPtr,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_set_preferences');
+  late final _pgp_certificate_set_preferencesPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.UintPtr,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_set_preferences');
   late final _pgp_certificate_set_preferences =
-      _pgp_certificate_set_preferencesPtr.asFunction<
-          int Function(
+      _pgp_certificate_set_preferencesPtr
+          .asFunction<
+            int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Uint8>,
               int,
@@ -839,7 +978,9 @@ class PgpFfiBindings {
               ffi.Pointer<ffi.Uint8>,
               int,
               int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Read back `cert`'s algorithm-preference and features subpackets (as set by
   /// `pgp_certificate_set_preferences`, or Sequoia's own defaults from
@@ -859,21 +1000,25 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_certificate_preferences(
-      cert,
-      out,
-    );
+    return _pgp_certificate_preferences(cert, out);
   }
 
-  late final _pgp_certificate_preferencesPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_preferences');
-  late final _pgp_certificate_preferences =
-      _pgp_certificate_preferencesPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_preferencesPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_preferences');
+  late final _pgp_certificate_preferences = _pgp_certificate_preferencesPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Add a transport-encryption subkey, writing the updated cert to `*new_cert`.
   ///
@@ -883,21 +1028,26 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_certificate_add_transport_encryption_subkey(
-      cert,
-      new_cert,
-    );
+    return _pgp_certificate_add_transport_encryption_subkey(cert, new_cert);
   }
 
-  late final _pgp_certificate_add_transport_encryption_subkeyPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_add_transport_encryption_subkey');
+  late final _pgp_certificate_add_transport_encryption_subkeyPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_add_transport_encryption_subkey');
   late final _pgp_certificate_add_transport_encryption_subkey =
-      _pgp_certificate_add_transport_encryption_subkeyPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_add_transport_encryption_subkeyPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Add a signing subkey, writing the updated cert to `*new_cert`.
   ///
@@ -907,21 +1057,26 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_certificate_add_signing_subkey(
-      cert,
-      new_cert,
-    );
+    return _pgp_certificate_add_signing_subkey(cert, new_cert);
   }
 
-  late final _pgp_certificate_add_signing_subkeyPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_add_signing_subkey');
+  late final _pgp_certificate_add_signing_subkeyPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_add_signing_subkey');
   late final _pgp_certificate_add_signing_subkey =
-      _pgp_certificate_add_signing_subkeyPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_add_signing_subkeyPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Add an authentication subkey, writing the updated cert to `*new_cert`.
   ///
@@ -931,21 +1086,26 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_certificate_add_authentication_subkey(
-      cert,
-      new_cert,
-    );
+    return _pgp_certificate_add_authentication_subkey(cert, new_cert);
   }
 
-  late final _pgp_certificate_add_authentication_subkeyPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_add_authentication_subkey');
+  late final _pgp_certificate_add_authentication_subkeyPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_add_authentication_subkey');
   late final _pgp_certificate_add_authentication_subkey =
-      _pgp_certificate_add_authentication_subkeyPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_add_authentication_subkeyPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Revoke the subkey at `subkey_index`, writing the updated cert to `*new_cert`.
   ///
@@ -973,19 +1133,28 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_revoke_subkeyPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Uint32,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_revoke_subkey');
-  late final _pgp_certificate_revoke_subkey =
-      _pgp_certificate_revoke_subkeyPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, int, int,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_revoke_subkeyPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Uint32,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_revoke_subkey');
+  late final _pgp_certificate_revoke_subkey = _pgp_certificate_revoke_subkeyPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          int,
+          int,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Add `user_id` to the cert, writing the updated cert to `*new_cert`.
   ///
@@ -996,24 +1165,27 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> user_id,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_certificate_add_userid(
-      cert,
-      user_id,
-      new_cert,
-    );
+    return _pgp_certificate_add_userid(cert, user_id, new_cert);
   }
 
-  late final _pgp_certificate_add_useridPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_add_userid');
-  late final _pgp_certificate_add_userid =
-      _pgp_certificate_add_useridPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_add_useridPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_add_userid');
+  late final _pgp_certificate_add_userid = _pgp_certificate_add_useridPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Have `signing_cert` certify `user_id` on `target_cert` (a third-party
   /// certification, e.g. "Alice vouches that this user ID belongs to Bob"),
@@ -1040,18 +1212,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_certify_useridPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_certify_userid');
+  late final _pgp_certificate_certify_useridPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_certify_userid');
   late final _pgp_certificate_certify_userid =
-      _pgp_certificate_certify_useridPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_certify_useridPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Like `pgp_certificate_certify_userid`, but attaches an RFC 4880 Trust
   /// Signature subpacket recording delegated trust rather than plain direct
@@ -1091,25 +1272,31 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_certify_userid_with_trustPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Uint8,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_certify_userid_with_trust');
+  late final _pgp_certificate_certify_userid_with_trustPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Uint8,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_certify_userid_with_trust');
   late final _pgp_certificate_certify_userid_with_trust =
-      _pgp_certificate_certify_userid_with_trustPtr.asFunction<
-          int Function(
+      _pgp_certificate_certify_userid_with_trustPtr
+          .asFunction<
+            int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               int,
               int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Like `pgp_certificate_certify_userid`, but attaches an RFC 4880
   /// Exportable Certification subpacket recording whether the certification
@@ -1146,23 +1333,29 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_certify_userid_exportablePtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_certify_userid_exportable');
+  late final _pgp_certificate_certify_userid_exportablePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_certify_userid_exportable');
   late final _pgp_certificate_certify_userid_exportable =
-      _pgp_certificate_certify_userid_exportablePtr.asFunction<
-          int Function(
+      _pgp_certificate_certify_userid_exportablePtr
+          .asFunction<
+            int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Have `signing_cert` revoke its own earlier third-party certification of
   /// `user_id` on `target_cert` (the counterpart to
@@ -1198,25 +1391,31 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_revoke_userid_certificationPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_revoke_userid_certification');
+  late final _pgp_certificate_revoke_userid_certificationPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_revoke_userid_certification');
   late final _pgp_certificate_revoke_userid_certification =
-      _pgp_certificate_revoke_userid_certificationPtr.asFunction<
-          int Function(
+      _pgp_certificate_revoke_userid_certificationPtr
+          .asFunction<
+            int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               int,
               ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Encrypt `plaintext` to all `count` recipient certificates and write a single
   /// ASCII-armored message to `*armored_message`. Any recipient whose private key
@@ -1241,18 +1440,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_encrypt_string_to_recipientsPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<ffi.Pointer<Certificate>>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_encrypt_string_to_recipients');
+  late final _pgp_encrypt_string_to_recipientsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_encrypt_string_to_recipients');
   late final _pgp_encrypt_string_to_recipients =
-      _pgp_encrypt_string_to_recipientsPtr.asFunction<
-          int Function(ffi.Pointer<ffi.Pointer<Certificate>>, int,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_encrypt_string_to_recipientsPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+              int,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Revoke the exact-match user ID, writing the updated cert to `*new_cert`.
   ///
@@ -1279,19 +1487,28 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_revoke_useridPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Uint8,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_revoke_userid');
-  late final _pgp_certificate_revoke_userid =
-      _pgp_certificate_revoke_useridPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>, int,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_revoke_useridPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Uint8,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_revoke_userid');
+  late final _pgp_certificate_revoke_userid = _pgp_certificate_revoke_useridPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          int,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Return the primary key fingerprint as an uppercase hex string.
   /// Caller must free `*out` with `free()`.
@@ -1302,21 +1519,25 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_certificate_fingerprint(
-      cert,
-      out,
-    );
+    return _pgp_certificate_fingerprint(cert, out);
   }
 
-  late final _pgp_certificate_fingerprintPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_fingerprint');
-  late final _pgp_certificate_fingerprint =
-      _pgp_certificate_fingerprintPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_fingerprintPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_fingerprint');
+  late final _pgp_certificate_fingerprint = _pgp_certificate_fingerprintPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Return all user IDs as a newline-delimited UTF-8 string.
   /// Includes revoked and expired user IDs (raw, unfiltered).
@@ -1328,19 +1549,25 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_certificate_userids(
-      cert,
-      out,
-    );
+    return _pgp_certificate_userids(cert, out);
   }
 
-  late final _pgp_certificate_useridsPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('pgp_certificate_userids');
-  late final _pgp_certificate_userids = _pgp_certificate_useridsPtr.asFunction<
-      int Function(
-          ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_useridsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_userids');
+  late final _pgp_certificate_userids = _pgp_certificate_useridsPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Return one line per user ID: `user_id\trevoked\tprimary\texpiry_epoch`,
   /// where `revoked` is `1` if that user ID is revoked (`0` otherwise),
@@ -1360,21 +1587,25 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_certificate_userids_info(
-      cert,
-      out,
-    );
+    return _pgp_certificate_userids_info(cert, out);
   }
 
-  late final _pgp_certificate_userids_infoPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_userids_info');
-  late final _pgp_certificate_userids_info =
-      _pgp_certificate_userids_infoPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_userids_infoPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_userids_info');
+  late final _pgp_certificate_userids_info = _pgp_certificate_userids_infoPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Mark `user_id` as the certificate's primary user ID, writing the updated
   /// cert to `*new_cert`. Primary-user-ID resolution (as used by
@@ -1395,24 +1626,28 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> user_id,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_certificate_set_primary_userid(
-      cert,
-      user_id,
-      new_cert,
-    );
+    return _pgp_certificate_set_primary_userid(cert, user_id, new_cert);
   }
 
-  late final _pgp_certificate_set_primary_useridPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_set_primary_userid');
+  late final _pgp_certificate_set_primary_useridPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_set_primary_userid');
   late final _pgp_certificate_set_primary_userid =
-      _pgp_certificate_set_primary_useridPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_set_primary_useridPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Return one line per distinct third-party certifier of `user_id`:
   /// `issuer_fingerprint\trevoked\ttrust_depth\ttrust_amount`, where
@@ -1443,22 +1678,28 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> user_id,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_certificate_userid_certifications(
-      cert,
-      user_id,
-      out,
-    );
+    return _pgp_certificate_userid_certifications(cert, user_id, out);
   }
 
-  late final _pgp_certificate_userid_certificationsPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_userid_certifications');
+  late final _pgp_certificate_userid_certificationsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_userid_certifications');
   late final _pgp_certificate_userid_certifications =
-      _pgp_certificate_userid_certificationsPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_userid_certificationsPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Cryptographically verify `issuer_cert`'s third-party certification of
   /// `user_id` on `target_cert` (as listed by
@@ -1494,18 +1735,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_verify_userid_certificationPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Uint8>)>>(
-      'pgp_certificate_verify_userid_certification');
+  late final _pgp_certificate_verify_userid_certificationPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Uint8>,
+          )
+        >
+      >('pgp_certificate_verify_userid_certification');
   late final _pgp_certificate_verify_userid_certification =
-      _pgp_certificate_verify_userid_certificationPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>)>();
+      _pgp_certificate_verify_userid_certificationPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Uint8>,
+            )
+          >();
 
   /// Return one line per subkey:
   /// `index\tfingerprint\tflags\trevoked\texpiry_epoch`, where `flags` is a
@@ -1524,19 +1774,25 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out,
   ) {
-    return _pgp_certificate_subkeys(
-      cert,
-      out,
-    );
+    return _pgp_certificate_subkeys(cert, out);
   }
 
-  late final _pgp_certificate_subkeysPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('pgp_certificate_subkeys');
-  late final _pgp_certificate_subkeys = _pgp_certificate_subkeysPtr.asFunction<
-      int Function(
-          ffi.Pointer<Certificate>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_subkeysPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_subkeys');
+  late final _pgp_certificate_subkeys = _pgp_certificate_subkeysPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Write the primary key expiration as seconds since the Unix epoch into `*out`.
   /// Writes 0 if the certificate has no expiry or if the policy check fails.
@@ -1547,19 +1803,19 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> cert,
     ffi.Pointer<ffi.Int64> out,
   ) {
-    return _pgp_certificate_expiry_epoch(
-      cert,
-      out,
-    );
+    return _pgp_certificate_expiry_epoch(cert, out);
   }
 
-  late final _pgp_certificate_expiry_epochPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_expiry_epoch');
-  late final _pgp_certificate_expiry_epoch =
-      _pgp_certificate_expiry_epochPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Int64>)>();
+  late final _pgp_certificate_expiry_epochPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Int64>)
+        >
+      >('pgp_certificate_expiry_epoch');
+  late final _pgp_certificate_expiry_epoch = _pgp_certificate_expiry_epochPtr
+      .asFunction<
+        int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Int64>)
+      >();
 
   /// Generate a new certificate with all secret key material encrypted with
   /// `passphrase`. Writes the locked certificate to `*new_cert`.
@@ -1571,22 +1827,28 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> passphrase,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_key_generate_with_passphrase(
-      user_id,
-      passphrase,
-      new_cert,
-    );
+    return _pgp_key_generate_with_passphrase(user_id, passphrase, new_cert);
   }
 
-  late final _pgp_key_generate_with_passphrasePtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_key_generate_with_passphrase');
+  late final _pgp_key_generate_with_passphrasePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_key_generate_with_passphrase');
   late final _pgp_key_generate_with_passphrase =
-      _pgp_key_generate_with_passphrasePtr.asFunction<
-          int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_key_generate_with_passphrasePtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Decrypt all passphrase-protected secret key material in `cert`, writing
   /// a new certificate with unencrypted secrets to `*out_cert`.
@@ -1601,23 +1863,27 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> passphrase,
     ffi.Pointer<ffi.Pointer<Certificate>> out_cert,
   ) {
-    return _pgp_certificate_unlock(
-      cert,
-      passphrase,
-      out_cert,
-    );
+    return _pgp_certificate_unlock(cert, passphrase, out_cert);
   }
 
-  late final _pgp_certificate_unlockPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_unlock');
-  late final _pgp_certificate_unlock = _pgp_certificate_unlockPtr.asFunction<
-      int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-          ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_unlockPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_unlock');
+  late final _pgp_certificate_unlock = _pgp_certificate_unlockPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Encrypt all currently-unencrypted secret key material in `cert` with
   /// `passphrase`, writing a new certificate with locked secrets to
@@ -1637,20 +1903,27 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> passphrase,
     ffi.Pointer<ffi.Pointer<Certificate>> out_cert,
   ) {
-    return _pgp_certificate_lock(
-      cert,
-      passphrase,
-      out_cert,
-    );
+    return _pgp_certificate_lock(cert, passphrase, out_cert);
   }
 
-  late final _pgp_certificate_lockPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>>('pgp_certificate_lock');
-  late final _pgp_certificate_lock = _pgp_certificate_lockPtr.asFunction<
-      int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-          ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_lockPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_lock');
+  late final _pgp_certificate_lock = _pgp_certificate_lockPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Sign `plaintext` with the certificate and write an ASCII-armored detached
   /// signature (BEGIN PGP SIGNATURE) to `*armored_sig`. The plaintext is left
@@ -1663,22 +1936,27 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> plaintext,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored_sig,
   ) {
-    return _pgp_certificate_sign_detached(
-      cert,
-      plaintext,
-      armored_sig,
-    );
+    return _pgp_certificate_sign_detached(cert, plaintext, armored_sig);
   }
 
-  late final _pgp_certificate_sign_detachedPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_sign_detached');
-  late final _pgp_certificate_sign_detached =
-      _pgp_certificate_sign_detachedPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_sign_detachedPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_sign_detached');
+  late final _pgp_certificate_sign_detached = _pgp_certificate_sign_detachedPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Verify a detached signature `armored_sig` against `plaintext` using the
   /// certificate. Returns 0 if valid, negative on failure.
@@ -1710,22 +1988,29 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_verify_detachedPtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_certificate_verify_detachedPtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_detached');
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('pgp_certificate_verify_detached');
   late final _pgp_certificate_verify_detached =
-      _pgp_certificate_verify_detachedPtr.asFunction<
-          int Function(
+      _pgp_certificate_verify_detachedPtr
+          .asFunction<
+            int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>();
+              ffi.Pointer<ffi.Int64>,
+            )
+          >();
 
   /// Generate a new certificate carrying `user_id` with an optional validity
   /// period. `validity_seconds == 0` means no expiry.
@@ -1739,22 +2024,27 @@ class PgpFfiBindings {
     int validity_seconds,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_key_generate_with_expiry(
-      user_id,
-      validity_seconds,
-      new_cert,
-    );
+    return _pgp_key_generate_with_expiry(user_id, validity_seconds, new_cert);
   }
 
-  late final _pgp_key_generate_with_expiryPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Uint64,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_key_generate_with_expiry');
-  late final _pgp_key_generate_with_expiry =
-      _pgp_key_generate_with_expiryPtr.asFunction<
-          int Function(ffi.Pointer<ffi.Char>, int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_key_generate_with_expiryPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Uint64,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_key_generate_with_expiry');
+  late final _pgp_key_generate_with_expiry = _pgp_key_generate_with_expiryPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<ffi.Char>,
+          int,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Update the expiry on every key in the certificate. `validity_seconds == 0`
   /// clears the expiry. Writes the updated certificate to `*new_cert`. Caller
@@ -1767,22 +2057,27 @@ class PgpFfiBindings {
     int validity_seconds,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_certificate_set_expiry(
-      cert,
-      validity_seconds,
-      new_cert,
-    );
+    return _pgp_certificate_set_expiry(cert, validity_seconds, new_cert);
   }
 
-  late final _pgp_certificate_set_expiryPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Uint64,
-                  ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_set_expiry');
-  late final _pgp_certificate_set_expiry =
-      _pgp_certificate_set_expiryPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_set_expiryPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Uint64,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_set_expiry');
+  late final _pgp_certificate_set_expiry = _pgp_certificate_set_expiryPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          int,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Update the expiry on a single subkey (counting subkeys only, same indexing
   /// as `pgp_certificate_revoke_subkey`/`pgp_certificate_subkeys`), leaving the
@@ -1807,15 +2102,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_set_subkey_expiryPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Uint32,
-                  ffi.Uint64, ffi.Pointer<ffi.Pointer<Certificate>>)>>(
-      'pgp_certificate_set_subkey_expiry');
+  late final _pgp_certificate_set_subkey_expiryPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Uint32,
+            ffi.Uint64,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_set_subkey_expiry');
   late final _pgp_certificate_set_subkey_expiry =
-      _pgp_certificate_set_subkey_expiryPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, int, int,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>();
+      _pgp_certificate_set_subkey_expiryPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              int,
+              int,
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+            )
+          >();
 
   /// Encrypt `plaintext` to all `count` recipient certificates and sign the
   /// message with `signer_cert`. Writes a single ASCII-armored message to
@@ -1840,23 +2147,28 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_encrypt_and_sign_stringPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Pointer<Certificate>>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_encrypt_and_sign_string');
-  late final _pgp_encrypt_and_sign_string =
-      _pgp_encrypt_and_sign_stringPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>,
-              int,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_encrypt_and_sign_stringPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_encrypt_and_sign_string');
+  late final _pgp_encrypt_and_sign_string = _pgp_encrypt_and_sign_stringPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+          int,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Decrypt an ASCII-armored message with `decrypt_cert` and verify its
   /// signature against `verify_cert`. Writes the plaintext to `*plaintext_out`
@@ -1889,24 +2201,30 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_decrypt_and_verify_stringPtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_decrypt_and_verify_stringPtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>>('pgp_decrypt_and_verify_string');
-  late final _pgp_decrypt_and_verify_string =
-      _pgp_decrypt_and_verify_stringPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>();
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('pgp_decrypt_and_verify_string');
+  late final _pgp_decrypt_and_verify_string = _pgp_decrypt_and_verify_stringPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Int64>,
+        )
+      >();
 
   /// Encrypt `data` (raw bytes, `len` long) to the certificate and write an
   /// ASCII-armored message to `*armored_message`. Caller must free
@@ -1921,26 +2239,29 @@ class PgpFfiBindings {
     int len,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored_message,
   ) {
-    return _pgp_certificate_encrypt_bytes(
-      cert,
-      data,
-      len,
-      armored_message,
-    );
+    return _pgp_certificate_encrypt_bytes(cert, data, len, armored_message);
   }
 
-  late final _pgp_certificate_encrypt_bytesPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_encrypt_bytes');
-  late final _pgp_certificate_encrypt_bytes =
-      _pgp_certificate_encrypt_bytesPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Uint8>, int,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_encrypt_bytesPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_encrypt_bytes');
+  late final _pgp_certificate_encrypt_bytes = _pgp_certificate_encrypt_bytesPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Decrypt an ASCII-armored message using the certificate and write the raw
   /// plaintext bytes to `*plaintext_out` (length in `*plaintext_len`). Caller
@@ -1963,17 +2284,26 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_decrypt_bytesPtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_certificate_decrypt_bytesPtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-              ffi.Pointer<ffi.UintPtr>)>>('pgp_certificate_decrypt_bytes');
-  late final _pgp_certificate_decrypt_bytes =
-      _pgp_certificate_decrypt_bytesPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Uint8>>, ffi.Pointer<ffi.UintPtr>)>();
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+            ffi.Pointer<ffi.UintPtr>,
+          )
+        >
+      >('pgp_certificate_decrypt_bytes');
+  late final _pgp_certificate_decrypt_bytes = _pgp_certificate_decrypt_bytesPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+          ffi.Pointer<ffi.UintPtr>,
+        )
+      >();
 
   /// Sign `data` (raw bytes, `len` long) with the certificate and write an
   /// ASCII-armored signed message to `*armored_message`. Caller must free
@@ -1988,26 +2318,29 @@ class PgpFfiBindings {
     int len,
     ffi.Pointer<ffi.Pointer<ffi.Char>> armored_message,
   ) {
-    return _pgp_certificate_sign_bytes(
-      cert,
-      data,
-      len,
-      armored_message,
-    );
+    return _pgp_certificate_sign_bytes(cert, data, len, armored_message);
   }
 
-  late final _pgp_certificate_sign_bytesPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_sign_bytes');
-  late final _pgp_certificate_sign_bytes =
-      _pgp_certificate_sign_bytesPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Uint8>, int,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_certificate_sign_bytesPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_sign_bytes');
+  late final _pgp_certificate_sign_bytes = _pgp_certificate_sign_bytesPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Verify an ASCII-armored signed message and write the verified raw bytes to
   /// `*plaintext_out` (length in `*plaintext_len`). Caller must free
@@ -2043,24 +2376,30 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_verify_bytesPtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_certificate_verify_bytesPtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-              ffi.Pointer<ffi.UintPtr>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_bytes');
-  late final _pgp_certificate_verify_bytes =
-      _pgp_certificate_verify_bytesPtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-              ffi.Pointer<ffi.UintPtr>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>();
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+            ffi.Pointer<ffi.UintPtr>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('pgp_certificate_verify_bytes');
+  late final _pgp_certificate_verify_bytes = _pgp_certificate_verify_bytesPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+          ffi.Pointer<ffi.UintPtr>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Int64>,
+        )
+      >();
 
   /// Encrypt `data` (raw bytes, `len` long) to all `count` recipient certificates
   /// and write an ASCII-armored message to `*armored_message`. Caller must free
@@ -2086,23 +2425,29 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_encrypt_bytes_to_recipientsPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<ffi.Pointer<Certificate>>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Uint8>,
-                  ffi.UintPtr,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_encrypt_bytes_to_recipients');
+  late final _pgp_encrypt_bytes_to_recipientsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_encrypt_bytes_to_recipients');
   late final _pgp_encrypt_bytes_to_recipients =
-      _pgp_encrypt_bytes_to_recipientsPtr.asFunction<
-          int Function(
+      _pgp_encrypt_bytes_to_recipientsPtr
+          .asFunction<
+            int Function(
               ffi.Pointer<ffi.Pointer<Certificate>>,
               int,
               ffi.Pointer<ffi.Uint8>,
               int,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Sign `plaintext` with the certificate using the Cleartext Signature
   /// Framework (RFC 4880 section 7), writing a "BEGIN PGP SIGNED MESSAGE" block to
@@ -2115,22 +2460,28 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> plaintext,
     ffi.Pointer<ffi.Pointer<ffi.Char>> signed_message,
   ) {
-    return _pgp_certificate_sign_cleartext(
-      cert,
-      plaintext,
-      signed_message,
-    );
+    return _pgp_certificate_sign_cleartext(cert, plaintext, signed_message);
   }
 
-  late final _pgp_certificate_sign_cleartextPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_certificate_sign_cleartext');
+  late final _pgp_certificate_sign_cleartextPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_certificate_sign_cleartext');
   late final _pgp_certificate_sign_cleartext =
-      _pgp_certificate_sign_cleartextPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_certificate_sign_cleartextPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Verify a "BEGIN PGP SIGNED MESSAGE" cleartext-signed message using the
   /// certificate. Writes the plaintext to `*plaintext_out`. Caller must free
@@ -2163,22 +2514,29 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_certificate_verify_cleartextPtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_certificate_verify_cleartextPtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>>('pgp_certificate_verify_cleartext');
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('pgp_certificate_verify_cleartext');
   late final _pgp_certificate_verify_cleartext =
-      _pgp_certificate_verify_cleartextPtr.asFunction<
-          int Function(
+      _pgp_certificate_verify_cleartextPtr
+          .asFunction<
+            int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>();
+              ffi.Pointer<ffi.Int64>,
+            )
+          >();
 
   /// Encrypt `plaintext` with `passphrase` (no public key required), writing an
   /// ASCII-armored message to `*armored_message`. Caller must free
@@ -2198,15 +2556,24 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_encrypt_string_symmetricPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_encrypt_string_symmetric');
-  late final _pgp_encrypt_string_symmetric =
-      _pgp_encrypt_string_symmetricPtr.asFunction<
-          int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_encrypt_string_symmetricPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_encrypt_string_symmetric');
+  late final _pgp_encrypt_string_symmetric = _pgp_encrypt_string_symmetricPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Decrypt an ASCII-armored passphrase-encrypted message, writing plaintext to
   /// `*plaintext_out`. Caller must free `*plaintext_out` with `free()`.
@@ -2227,15 +2594,24 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_decrypt_string_symmetricPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_decrypt_string_symmetric');
-  late final _pgp_decrypt_string_symmetric =
-      _pgp_decrypt_string_symmetricPtr.asFunction<
-          int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _pgp_decrypt_string_symmetricPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_decrypt_string_symmetric');
+  late final _pgp_decrypt_string_symmetric = _pgp_decrypt_string_symmetricPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+        )
+      >();
 
   /// Sign `plaintext` with `signer_cert` and encrypt it with `passphrase` (no
   /// recipient public key required), writing a single ASCII-armored message to
@@ -2260,18 +2636,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_encrypt_and_sign_string_symmetricPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'pgp_encrypt_and_sign_string_symmetric');
+  late final _pgp_encrypt_and_sign_string_symmetricPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          )
+        >
+      >('pgp_encrypt_and_sign_string_symmetric');
   late final _pgp_encrypt_and_sign_string_symmetric =
-      _pgp_encrypt_and_sign_string_symmetricPtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _pgp_encrypt_and_sign_string_symmetricPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<Certificate>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            )
+          >();
 
   /// Decrypt a passphrase-encrypted, signed ASCII-armored message and verify
   /// its signature against `verify_cert`: the passphrase-only counterpart to
@@ -2306,25 +2691,31 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_decrypt_and_verify_string_symmetricPtr = _lookup<
-          ffi.NativeFunction<
-              ffi.Int32 Function(
-                  ffi.Pointer<Certificate>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Char>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
-                  ffi.Pointer<ffi.Pointer<ffi.Char>>,
-                  ffi.Pointer<ffi.Int64>)>>(
-      'pgp_decrypt_and_verify_string_symmetric');
+  late final _pgp_decrypt_and_verify_string_symmetricPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('pgp_decrypt_and_verify_string_symmetric');
   late final _pgp_decrypt_and_verify_string_symmetric =
-      _pgp_decrypt_and_verify_string_symmetricPtr.asFunction<
-          int Function(
+      _pgp_decrypt_and_verify_string_symmetricPtr
+          .asFunction<
+            int Function(
               ffi.Pointer<Certificate>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
               ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>();
+              ffi.Pointer<ffi.Int64>,
+            )
+          >();
 
   /// Merge updates from `other_cert` into `base_cert`: new signatures,
   /// certifications, subkeys, and revocations: writing the combined
@@ -2349,20 +2740,27 @@ class PgpFfiBindings {
     ffi.Pointer<Certificate> other_cert,
     ffi.Pointer<ffi.Pointer<Certificate>> new_cert,
   ) {
-    return _pgp_certificate_merge(
-      base_cert,
-      other_cert,
-      new_cert,
-    );
+    return _pgp_certificate_merge(base_cert, other_cert, new_cert);
   }
 
-  late final _pgp_certificate_mergePtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>)>>('pgp_certificate_merge');
-  late final _pgp_certificate_merge = _pgp_certificate_mergePtr.asFunction<
-      int Function(ffi.Pointer<Certificate>, ffi.Pointer<Certificate>,
-          ffi.Pointer<ffi.Pointer<Certificate>>)>();
+  late final _pgp_certificate_mergePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+          )
+        >
+      >('pgp_certificate_merge');
+  late final _pgp_certificate_merge = _pgp_certificate_mergePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+        )
+      >();
 
   /// Encrypt the file at `input_path` to `cert` and write an ASCII-armored
   /// message to `output_path`, streaming through the filesystem so the
@@ -2378,21 +2776,27 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> input_path,
     ffi.Pointer<ffi.Char> output_path,
   ) {
-    return _pgp_certificate_encrypt_file(
-      cert,
-      input_path,
-      output_path,
-    );
+    return _pgp_certificate_encrypt_file(cert, input_path, output_path);
   }
 
-  late final _pgp_certificate_encrypt_filePtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>>('pgp_certificate_encrypt_file');
-  late final _pgp_certificate_encrypt_file =
-      _pgp_certificate_encrypt_filePtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>();
+  late final _pgp_certificate_encrypt_filePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+          )
+        >
+      >('pgp_certificate_encrypt_file');
+  late final _pgp_certificate_encrypt_file = _pgp_certificate_encrypt_filePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+        )
+      >();
 
   /// Decrypt the ASCII-armored message at `input_path` using `cert` and write
   /// the raw plaintext to `output_path`, streaming through the filesystem. See
@@ -2406,21 +2810,27 @@ class PgpFfiBindings {
     ffi.Pointer<ffi.Char> input_path,
     ffi.Pointer<ffi.Char> output_path,
   ) {
-    return _pgp_certificate_decrypt_file(
-      cert,
-      input_path,
-      output_path,
-    );
+    return _pgp_certificate_decrypt_file(cert, input_path, output_path);
   }
 
-  late final _pgp_certificate_decrypt_filePtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>>('pgp_certificate_decrypt_file');
-  late final _pgp_certificate_decrypt_file =
-      _pgp_certificate_decrypt_filePtr.asFunction<
-          int Function(ffi.Pointer<Certificate>, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>();
+  late final _pgp_certificate_decrypt_filePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+          )
+        >
+      >('pgp_certificate_decrypt_file');
+  late final _pgp_certificate_decrypt_file = _pgp_certificate_decrypt_filePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+        )
+      >();
 
   /// Encrypt the file at `input_path` to all `count` recipient certificates,
   /// streaming the result to `output_path`. Any recipient whose private key is
@@ -2446,17 +2856,27 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_encrypt_to_recipients_filePtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_encrypt_to_recipients_filePtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<ffi.Pointer<Certificate>>,
-              ffi.UintPtr,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>>('pgp_encrypt_to_recipients_file');
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+          )
+        >
+      >('pgp_encrypt_to_recipients_file');
   late final _pgp_encrypt_to_recipients_file =
-      _pgp_encrypt_to_recipients_filePtr.asFunction<
-          int Function(ffi.Pointer<ffi.Pointer<Certificate>>, int,
-              ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>();
+      _pgp_encrypt_to_recipients_filePtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<ffi.Pointer<Certificate>>,
+              int,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Char>,
+            )
+          >();
 
   /// Encrypt the file at `input_path` to all `count` recipient certificates and
   /// sign it with `signer_cert`, streaming the result to `output_path`. The
@@ -2483,22 +2903,28 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_encrypt_and_sign_filePtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_encrypt_and_sign_filePtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>,
-              ffi.UintPtr,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>>('pgp_encrypt_and_sign_file');
-  late final _pgp_encrypt_and_sign_file =
-      _pgp_encrypt_and_sign_filePtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Pointer<Certificate>>,
-              int,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>();
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Pointer<Certificate>>,
+            ffi.UintPtr,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+          )
+        >
+      >('pgp_encrypt_and_sign_file');
+  late final _pgp_encrypt_and_sign_file = _pgp_encrypt_and_sign_filePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Pointer<Certificate>>,
+          int,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+        )
+      >();
 
   /// Decrypt the ASCII-armored message at `input_path` with `decrypt_cert` and
   /// verify its signature against `verify_cert`, streaming the plaintext to
@@ -2534,24 +2960,30 @@ class PgpFfiBindings {
     );
   }
 
-  late final _pgp_decrypt_and_verify_filePtr = _lookup<
-      ffi.NativeFunction<
+  late final _pgp_decrypt_and_verify_filePtr =
+      _lookup<
+        ffi.NativeFunction<
           ffi.Int32 Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>>('pgp_decrypt_and_verify_file');
-  late final _pgp_decrypt_and_verify_file =
-      _pgp_decrypt_and_verify_filePtr.asFunction<
-          int Function(
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<Certificate>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>,
-              ffi.Pointer<ffi.Int64>)>();
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<Certificate>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('pgp_decrypt_and_verify_file');
+  late final _pgp_decrypt_and_verify_file = _pgp_decrypt_and_verify_filePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<Certificate>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Int64>,
+        )
+      >();
 }
 
 final class Certificate extends ffi.Opaque {}
