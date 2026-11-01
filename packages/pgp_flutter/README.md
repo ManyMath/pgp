@@ -39,6 +39,10 @@ flutter test integration_test -d <device-id>
 - Windows builds use Sequoia's CNG backend through `windows/rust`, which wraps
   the crate with the `crypto-cng` feature, so they need only the Visual Studio
   toolchain Flutter already requires.
-- iOS 13 or later; macOS 10.15 or later.
+- iOS 13 or later; macOS 10.15 or later. On Apple platforms the podspec
+  force-loads `libpgp_ffi.a` into the plugin's framework, so the app must
+  link pods as frameworks (Flutter's default `use_frameworks!`). With static
+  pod linkage the symbols never reach the app and `ensureInitialized` throws;
+  the other ManyMath plugins share this limitation.
 
 See [`rust/README.md`](rust/README.md) for the crate's backends.
