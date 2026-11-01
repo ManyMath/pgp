@@ -6,9 +6,9 @@ The crypto backend is chosen with a cargo feature, one at a time:
 
 | Feature | Backend | Notes |
 |---|---|---|
-| `crypto-openssl-vendored` (default) | OpenSSL, built from source and linked statically | Needs perl, make and a C compiler; no system OpenSSL. |
+| `crypto-openssl-vendored` (default) | OpenSSL, built from source and linked statically | Needs perl, make, a C compiler and libclang (bindgen generates the OpenSSL bindings); no system OpenSSL. |
 | `crypto-openssl` | System OpenSSL (3.0.7+) | Needs OpenSSL headers. |
-| `crypto-nettle` | Nettle | Needs `nettle-dev`. Not tested here. |
+| `crypto-nettle` | Nettle | Needs `nettle-dev` and libclang. Crate tests pass with Nettle 3.10.1 (Debian trixie). |
 | `crypto-cng` | Windows CNG | Windows only; needs nothing beyond the OS. `pgp_flutter` builds Windows with it. |
 | `crypto-rust` | RustCrypto | Sequoia marks it experimental and variable-time, so this crate enables `allow-experimental-crypto` and `allow-variable-time-crypto` for it. Development only. |
 

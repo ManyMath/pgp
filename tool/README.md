@@ -18,7 +18,8 @@ published, which is expected.
 
 Provision Dart 3.13.2, Flutter, Python 3.12+, and Rust stable plus the required
 targets; the gate never installs them. Android, iOS, Linux and macOS builds
-compile OpenSSL from source (perl, make, a C compiler). Windows builds use
+compile OpenSSL from source (perl, make, a C compiler, and libclang for
+bindgen). Windows builds use
 `packages/pgp_flutter/windows/rust`, which wraps the crate with the CNG backend
 and needs only the MSVC toolchain. The gate sets RUSTUP_WINDOWS_PATH_ADD_BIN=1
 for its children: rustup proxies installed as symlinks cannot be started by
