@@ -1,0 +1,69 @@
+name: Private pgp verification
+on:
+  push:
+    branches: [main, 'maintenance/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  RUSTUP_TOOLCHAIN: 1.94.0
+  CARGO_HOME: ${{ runner.temp }}/pgp-cargo-${{ github.run_id }}
+  CARGO_BUILD_JOBS: '3'
+  DASH__SUPPRESS_ANALYTICS: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  CI: 'true'
+  DO_NOT_TRACK: '1'
+jobs:
+  linux:
+    runs-on: manymath-maintenance-linux-x64
+    timeout-minutes: 60
+    steps:
+      - name: Require private primary forge
+        env:
+          PRIMARY_SERVER: ${{ github.server_url }}
+        run: test "$PRIMARY_SERVER" = 'https://git.manymath.com'
+      - uses: actions/checkout@v4
+      - name: Rebuild exact tooling identity from private fork
+        env:
+          GIT_SSH_COMMAND: /usr/bin/ssh -o Hostname=195.201.108.115 -p 2222 -l git -o ProxyCommand=none -o ProxyJump=none
+          GIT_SSH_VARIANT: ssh
+        run: |
+          source_root="$(mktemp -d)"
+          trap 'rm -rf "$source_root"' EXIT
+          git -c core.hooksPath=/dev/null clone --quiet --no-checkout ssh://git@git.manymath.com:2222/sneurlax/cargokit.git "$source_root/fork"
+          python3 tool/cargokit_sync.py --manifest tool/cargokit/manifest.json --source "$source_root/fork" --check packages/pgp_flutter/cargokit
+      - name: Record provisioned tools
+        run: |
+          python3 --version
+          dart --version
+          flutter --version
+          cargo --version
+      - name: Payload fixtures regression
+        run: python3 -m unittest discover -s tool/tests -v
+      - name: Native checks
+        run: |
+          cargo fmt --all --check --manifest-path packages/pgp_flutter/rust/Cargo.toml
+          cargo clippy --manifest-path packages/pgp_flutter/rust/Cargo.toml --lib --tests --examples -- -D warnings
+          cargo test --lib --manifest-path packages/pgp_flutter/rust/Cargo.toml
+          cargo test --lib --no-default-features --features crypto-rust --manifest-path packages/pgp_flutter/rust/Cargo.toml
+          cargo build --features header --manifest-path packages/pgp_flutter/rust/Cargo.toml
+          git diff --exit-code -- packages/pgp_flutter/rust/pgp-ffi.h
+          cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
+      - name: Dart and Flutter checks
+        run: |
+          flutter pub get
+          dart format --output none --set-exit-if-changed packages/pgp_dart packages/pgp_flutter/lib packages/pgp_flutter/test packages/pgp_flutter/example/lib packages/pgp_flutter/example/integration_test
+          dart analyze packages/pgp_dart
+          flutter analyze packages/pgp_flutter
+          dart test packages/pgp_dart
+          flutter test packages/pgp_flutter/test
+      - name: Source-only actual pub archives and native consumers
+        run: |
+          evidence_root="$(mktemp -d)"
+          python3 tool/native_payload.py --config tool/payload.json --mode candidate --output "$evidence_root/candidate"
+          cat "$evidence_root/candidate/evidence.json"
+          echo "Private candidate archives and logs retained at $evidence_root"
+      - name: Example Linux build
+        working-directory: packages/pgp_flutter/example
+        run: flutter build linux --debug
