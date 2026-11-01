@@ -32,6 +32,10 @@ Iterable<String> _candidates() sync* {
   for (var i = 0; i < 6; i++) {
     for (final profile in ['release', 'debug']) {
       yield '${dir.path}/packages/pgp_flutter/rust/target/$profile/$_fileName';
+      // The CNG build, which needs no perl or NASM on Windows.
+      if (Platform.isWindows) {
+        yield '${dir.path}/packages/pgp_flutter/windows/rust/target/$profile/$_fileName';
+      }
     }
     final parent = dir.parent;
     if (parent.path == dir.path) break;

@@ -68,7 +68,13 @@ The crate lives in `packages/pgp_flutter/rust/`. From the repository root:
 ```sh
 cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
 ```
-The artifact lands in `packages/pgp_flutter/rust/target/release/`.
+The artifact lands in `packages/pgp_flutter/rust/target/release/`. That build
+compiles OpenSSL from source, which on Windows needs a native perl (such as
+Strawberry Perl) and NASM. On Windows, build the CNG variant instead; the loader
+finds it too:
+```sh
+cargo build --release --manifest-path packages/pgp_flutter/windows/rust/Cargo.toml
+```
 
 If `nativeLibraryOverridePath` or the `PGP_DART_LIB` environment variable is
 set, the loader opens exactly that path and throws if it cannot. Otherwise it
