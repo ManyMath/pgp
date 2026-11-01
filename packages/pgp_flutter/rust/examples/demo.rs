@@ -51,7 +51,10 @@ fn generate() -> openpgp::Result<openpgp::Cert> {
 
     let mut revocation_bytes = Vec::new();
     revocation.serialize(&mut revocation_bytes)?;
-    std::fs::write("revocation.sig", &revocation_bytes)?;
+    std::fs::write(
+        std::env::temp_dir().join("pgp-ffi-demo-revocation.sig"),
+        &revocation_bytes,
+    )?;
 
     Ok(cert)
 }
