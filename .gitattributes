@@ -2,3 +2,4 @@
 # VENDOR_PROVENANCE.json. Never convert its line endings, so Windows checkouts
 # (core.autocrlf) keep the reviewed bytes.
 packages/pgp_flutter/cargokit/** -text
+tool/cargokit/** -text
