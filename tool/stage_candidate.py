@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 PACKAGES = ["packages/pgp_dart", "packages/pgp_flutter"]
 
@@ -19,12 +20,14 @@ def main():
     parser.add_argument("--revision", required=True)
     args = parser.parse_args()
     root = args.staged_root.resolve()
-    # The gate's snapshot is a fresh `git init` with no commits; refuse to
-    # edit a real checkout.
-    has_history = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=root,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-    if has_history:
-        raise SystemExit(f"Refusing to edit a checkout with history: {root}")
+    # The gate stages a fresh `git init` with no refs under the temp dir;
+    # refuse anything else rather than edit a real checkout.
+    if not root.is_relative_to(Path(tempfile.gettempdir()).resolve()):
+        raise SystemExit(f"Refusing to edit outside the temp dir: {root}")
+    refs = subprocess.run(["git", "for-each-ref", "--count=1"], cwd=root,
+                          capture_output=True, text=True)
+    if refs.returncode or refs.stdout.strip():
+        raise SystemExit(f"Refusing to edit a checkout with refs: {root}")
     for package in PACKAGES:
         manifest = root / package / "pubspec.yaml"
         text = manifest.read_text()
