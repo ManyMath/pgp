@@ -64,10 +64,8 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      # No rust-cache here: cargokit builds into the example's build/ dir.
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: packages/pgp_flutter/rust
       - name: Install Linux desktop build deps
         if: matrix.name == 'linux'
         run: |
@@ -82,7 +80,7 @@ jobs:
   # the monorepo, fresh `flutter create` app), which the example build above
   # can't catch.
   consumer:
-    name: Consumer build & publish dry-run
+    name: Consumer build & crate package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

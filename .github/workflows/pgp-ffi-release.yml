@@ -147,7 +147,8 @@ jobs:
             cross: true
             smoke_test: false # cross-compiled; runner can't execute an aarch64 binary
           - name: macos-x86_64
-            runner: macos-13
+            # macos-13 is retired; this is the remaining Intel image.
+            runner: macos-15-intel
             target: x86_64-apple-darwin
             lib_file: libpgp_ffi.dylib
             cross: false
