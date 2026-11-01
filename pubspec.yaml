@@ -9,6 +9,7 @@ environment:
 workspace:
   - packages/pgp_dart
   - packages/pgp_flutter
+  - packages/pgp_flutter/example
 
 dev_dependencies:
   melos: ^7.0.0
