@@ -30,9 +30,9 @@ Development code; neither package is published to pub.dev yet.
 | Host | Status |
 |---|---|
 | Linux | Working: CLI, tests and the Flutter example's integration test |
-| Android | Builds (arm64-v8a, armeabi-v7a, x86_64) |
-| macOS | Not yet verified |
-| iOS | Not yet verified |
+| Android | Working: example integration test on an x86_64 emulator (API 36); builds arm64-v8a, armeabi-v7a, x86_64 |
+| macOS | Working: CLI, tests and the example integration test (arm64) |
+| iOS | Builds (device, no codesign); not yet run |
 | Windows | Not yet verified |
 | Web | Not supported (no `dart:ffi`) |
 
