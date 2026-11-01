@@ -9,6 +9,7 @@ The crypto backend is chosen with a cargo feature, one at a time:
 | `crypto-openssl-vendored` (default) | OpenSSL, built from source and linked statically | Needs perl, make and a C compiler; no system OpenSSL. |
 | `crypto-openssl` | System OpenSSL (3.0.7+) | Needs OpenSSL headers. |
 | `crypto-nettle` | Nettle | Needs `nettle-dev`. Not tested here. |
+| `crypto-cng` | Windows CNG | Windows only; needs nothing beyond the OS. `pgp_flutter` builds Windows with it. |
 | `crypto-rust` | RustCrypto | Sequoia marks it experimental and variable-time, so this crate enables `allow-experimental-crypto` and `allow-variable-time-crypto` for it. Development only. |
 
 For example: `cargo build --release --no-default-features --features crypto-rust`.

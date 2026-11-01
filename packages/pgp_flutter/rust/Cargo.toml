@@ -36,6 +36,8 @@ crypto-openssl = ["sequoia-openpgp/crypto-openssl"]
 # OpenSSL (Windows, Android, iOS, macOS). Needs perl, make and a C compiler.
 crypto-openssl-vendored = ["crypto-openssl", "dep:openssl-sys", "openssl-sys/vendored"]
 crypto-nettle = ["sequoia-openpgp/crypto-nettle"]
+# Windows CNG. Needs nothing beyond the OS.
+crypto-cng = ["sequoia-openpgp/crypto-cng"]
 # Regenerate pgp-ffi.h during the build.
 header = ["dep:cbindgen"]
 
