@@ -30,6 +30,7 @@ Development code; neither package is published to pub.dev yet.
 | Host | Status |
 |---|---|
 | Linux | Working: CLI, tests, the example integration test and the payload gate (Ubuntu 24.04, also WSL2) |
+| Linux aarch64 | Crate tests pass cross-compiled and run under qemu; the release library builds |
 | Android | Working: example integration test on an x86_64 emulator (API 36); the payload gate builds arm64-v8a, armeabi-v7a and x86_64 |
 | macOS | Working: CLI, tests, the example integration test and the payload gate (arm64) |
 | iOS | Working: example integration test on an iPhone 16 Pro simulator; device build without codesigning |
