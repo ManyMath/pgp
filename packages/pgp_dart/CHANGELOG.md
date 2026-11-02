@@ -1,3 +1,9 @@
+## 0.0.2
+
+- The Flutter plugin is published as `pgp` (it was `pgp_flutter`, which was
+  never released). The loader now looks for its Apple framework at
+  `pgp.framework/pgp` and for developer builds under `packages/pgp/rust`.
+
 ## 0.0.1
 
 - First release as `pgp_dart`. Collects the 0.0.1-dev.2 through

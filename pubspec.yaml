@@ -8,8 +8,8 @@ environment:
 
 workspace:
   - packages/pgp_dart
-  - packages/pgp_flutter
-  - packages/pgp_flutter/example
+  - packages/pgp
+  - packages/pgp/example
 
 dev_dependencies:
   melos: ^7.0.0
@@ -21,25 +21,25 @@ melos:
   scripts:
     analyze:
       description: Analyze all packages.
-      run: dart analyze packages/pgp_dart && flutter analyze packages/pgp_flutter
+      run: dart analyze packages/pgp_dart && flutter analyze packages/pgp
     format:
       description: Check Dart formatting.
       run: >-
         dart format --output none --set-exit-if-changed
-        packages/pgp_dart packages/pgp_flutter/lib packages/pgp_flutter/test
-        packages/pgp_flutter/example/lib packages/pgp_flutter/example/integration_test
+        packages/pgp_dart packages/pgp/lib packages/pgp/test
+        packages/pgp/example/lib packages/pgp/example/integration_test
     format:fix:
       description: Apply Dart formatting.
       run: >-
         dart format
-        packages/pgp_dart packages/pgp_flutter/lib packages/pgp_flutter/test
-        packages/pgp_flutter/example/lib packages/pgp_flutter/example/integration_test
+        packages/pgp_dart packages/pgp/lib packages/pgp/test
+        packages/pgp/example/lib packages/pgp/example/integration_test
     test:
       description: Run Dart and Flutter tests.
-      run: dart test packages/pgp_dart && flutter test packages/pgp_flutter/test
+      run: dart test packages/pgp_dart && flutter test packages/pgp/test
     native:build:
       description: Build the pgp_ffi shared library (for CLI/dev use).
-      run: cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
+      run: cargo build --release --manifest-path packages/pgp/rust/Cargo.toml
     native:test:
       description: Run the Rust crate tests.
-      run: cargo test --lib --manifest-path packages/pgp_flutter/rust/Cargo.toml
+      run: cargo test --lib --manifest-path packages/pgp/rust/Cargo.toml

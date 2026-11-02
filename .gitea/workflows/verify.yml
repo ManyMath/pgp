@@ -32,7 +32,7 @@ jobs:
           source_root="$(mktemp -d)"
           trap 'rm -rf "$source_root"' EXIT
           git -c core.hooksPath=/dev/null clone --quiet --no-checkout ssh://git@git.manymath.com:2222/sneurlax/cargokit.git "$source_root/fork"
-          python3 tool/cargokit_sync.py --manifest tool/cargokit/manifest.json --source "$source_root/fork" --check packages/pgp_flutter/cargokit
+          python3 tool/cargokit_sync.py --manifest tool/cargokit/manifest.json --source "$source_root/fork" --check packages/pgp/cargokit
       - name: Record provisioned tools
         run: |
           python3 --version
@@ -45,21 +45,21 @@ jobs:
           python3 tool/check_windows_wrapper.py
       - name: Native checks
         run: |
-          cargo fmt --all --check --manifest-path packages/pgp_flutter/rust/Cargo.toml
-          cargo clippy --locked --manifest-path packages/pgp_flutter/rust/Cargo.toml --lib --tests --examples -- -D warnings
-          cargo test --locked --lib --manifest-path packages/pgp_flutter/rust/Cargo.toml
-          cargo test --locked --lib --no-default-features --features crypto-rust --manifest-path packages/pgp_flutter/rust/Cargo.toml
-          cargo build --locked --features header --manifest-path packages/pgp_flutter/rust/Cargo.toml
-          git diff --exit-code -- packages/pgp_flutter/rust/pgp-ffi.h
-          cargo build --locked --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
+          cargo fmt --all --check --manifest-path packages/pgp/rust/Cargo.toml
+          cargo clippy --locked --manifest-path packages/pgp/rust/Cargo.toml --lib --tests --examples -- -D warnings
+          cargo test --locked --lib --manifest-path packages/pgp/rust/Cargo.toml
+          cargo test --locked --lib --no-default-features --features crypto-rust --manifest-path packages/pgp/rust/Cargo.toml
+          cargo build --locked --features header --manifest-path packages/pgp/rust/Cargo.toml
+          git diff --exit-code -- packages/pgp/rust/pgp-ffi.h
+          cargo build --locked --release --manifest-path packages/pgp/rust/Cargo.toml
       - name: Dart and Flutter checks
         run: |
           flutter pub get
-          dart format --output none --set-exit-if-changed packages/pgp_dart packages/pgp_flutter/lib packages/pgp_flutter/test packages/pgp_flutter/example/lib packages/pgp_flutter/example/integration_test
+          dart format --output none --set-exit-if-changed packages/pgp_dart packages/pgp/lib packages/pgp/test packages/pgp/example/lib packages/pgp/example/integration_test
           dart analyze packages/pgp_dart
-          flutter analyze packages/pgp_flutter
+          flutter analyze packages/pgp
           dart test packages/pgp_dart
-          flutter test packages/pgp_flutter/test
+          flutter test packages/pgp/test
       - name: Source-only actual pub archives and native consumers
         run: |
           evidence_root="$(mktemp -d)"
@@ -67,5 +67,5 @@ jobs:
           cat "$evidence_root/candidate/evidence.json"
           echo "Private candidate archives and logs retained at $evidence_root"
       - name: Example Linux build
-        working-directory: packages/pgp_flutter/example
+        working-directory: packages/pgp/example
         run: flutter build linux --debug

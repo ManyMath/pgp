@@ -1,0 +1,59 @@
+// The Android Gradle Plugin builds the native code with the Android NDK.
+
+group = "com.manymath.pgp"
+version = "1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        // The Android Gradle Plugin knows how to build native code with the NDK.
+        classpath("com.android.tools.build:gradle:8.11.1")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "com.manymath.pgp"
+
+    // Bumping the plugin compileSdk version requires all clients of this plugin
+    // to bump the version in their app.
+    compileSdk = 36
+
+    // Use the NDK version
+    // declared in /android/app/build.gradle file of the Flutter project.
+    // Replace it with a version number if this plugin requires a specific NDK version.
+    // (e.g. ndkVersion "23.1.7779620")
+    ndkVersion = android.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        // Matches Flutter's default so apps build without raising their minSdk.
+        minSdk = 24
+    }
+}
+
+// Build the `pgp_ffi` Rust crate (in ../rust, so it ships with the package)
+// via cargokit, which drops the per-ABI libpgp_ffi.so into jniLibs so it is
+// packaged in the APK and resolvable by DynamicLibrary.open('libpgp_ffi.so').
+apply from: "../cargokit/gradle/plugin.gradle"
+
+cargokit {
+    manifestDir = "../rust"
+    libname = "pgp_ffi"
+}

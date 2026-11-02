@@ -5,15 +5,15 @@ OpenPGP for Dart, backed by [Sequoia](https://sequoia-pgp.org) through the
 `pgp_dart` is the Flutter-free, pure-Dart `dart:ffi` binding over the native
 `pgp_ffi` library (`libpgp_ffi.{so,dylib}`, `pgp_ffi.dll`). It does not build
 the library itself: Flutter apps should depend on
-[`pgp_flutter`](../pgp_flutter), which builds and bundles it with cargokit;
-CLI tools build the crate once (see
+[`pgp`](https://pub.dev/packages/pgp), which builds and bundles it with
+cargokit; CLI tools build the crate once (see
 [Building the native library](#building-the-native-library)).
 
 ## Status
 The native library links a statically built OpenSSL by default; Sequoia's
 pure-Rust backend, which is experimental and variable-time with open timing
 advisories, is an opt-in `crypto-rust` feature for development. See
-[`pgp_flutter/rust/README.md`](../pgp_flutter/rust/README.md).
+[`pgp/rust/README.md`](../pgp/rust/README.md).
 
 ## Getting started
 Add the package:
@@ -62,21 +62,21 @@ dart run example/pgp_dart_example.dart
 ```
 
 ## Building the native library
-The crate lives in `packages/pgp_flutter/rust/`. From the repository root:
+The crate lives in `packages/pgp/rust/`. From the repository root:
 ```sh
-cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml
+cargo build --release --manifest-path packages/pgp/rust/Cargo.toml
 ```
-The artifact lands in `packages/pgp_flutter/rust/target/release/`. That build
+The artifact lands in `packages/pgp/rust/target/release/`. That build
 compiles OpenSSL from source, which on Windows needs a native perl (such as
 Strawberry Perl) and NASM. On Windows, build the CNG variant instead; the loader
 finds it too:
 ```sh
-cargo build --release --manifest-path packages/pgp_flutter/windows/rust/Cargo.toml
+cargo build --release --manifest-path packages/pgp/windows/rust/Cargo.toml
 ```
 
 If `nativeLibraryOverridePath` or the `PGP_DART_LIB` environment variable is
 set, the loader opens exactly that path and throws if it cannot. Otherwise it
-tries, in order: the `pgp_flutter` framework on Apple platforms, the
+tries, in order: the `pgp` plugin's framework on Apple platforms, the
 executable's `lib/` directory and the executable's own directory (Flutter
 desktop bundles, or a CLI shipped next to the library), the plain library name
 (the OS search path, which covers Android), and the crate's

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: tool/consumer_build.sh <flutter build target>...   e.g. linux apk
 #
-# Simulates a pub.dev install of pgp_flutter/pgp_dart: exports only the two
+# Simulates a pub.dev install of pgp/pgp_dart: exports only the two
 # package directories at HEAD (no monorepo around them, like the pub cache),
 # then builds a freshly created app that depends on them. Catches build files
 # that reach outside the package or break on what `flutter create` ships today.
@@ -40,9 +40,9 @@ for target in "$@"; do
 done
 
 mkdir -p "$work/export" "$work/pkgs"
-git -C "$repo" archive HEAD packages/pgp_flutter packages/pgp_dart | tar -x -C "$work/export"
-mv "$work/export/packages/pgp_flutter" "$work/export/packages/pgp_dart" "$work/pkgs/"
-rm -rf "$work/export" "$work/pkgs/pgp_flutter/example"
+git -C "$repo" archive HEAD packages/pgp packages/pgp_dart | tar -x -C "$work/export"
+mv "$work/export/packages/pgp" "$work/export/packages/pgp_dart" "$work/pkgs/"
+rm -rf "$work/export" "$work/pkgs/pgp/example"
 # Outside the workspace these are ordinary packages. (grep/mv rather than
 # sed -i, whose flags differ between GNU and BSD.)
 for f in "$work"/pkgs/*/pubspec.yaml; do
@@ -59,12 +59,12 @@ dependency_overrides:
   pgp_dart:
     path: ../pkgs/pgp_dart
 YAML
-awk '{print} /^dependencies:$/ {print "  pgp_flutter:\n    path: ../pkgs/pgp_flutter"}' \
+awk '{print} /^dependencies:$/ {print "  pgp:\n    path: ../pkgs/pgp"}' \
   pubspec.yaml > pubspec.yaml.tmp
 mv pubspec.yaml.tmp pubspec.yaml
 cat > lib/main.dart <<'DART'
 import 'package:flutter/material.dart';
-import 'package:pgp_flutter/pgp_flutter.dart';
+import 'package:pgp/pgp.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -16,10 +16,11 @@ String get _fileName => switch (Platform.operatingSystem) {
 };
 
 Iterable<String> _candidates() sync* {
-  // pgp_flutter force-loads the static library into its framework on Apple
-  // platforms; the loader resolves the framework binary by its short path.
+  // The `pgp` Flutter plugin force-loads the static library into its
+  // framework on Apple platforms; the loader resolves the framework binary by
+  // its short path.
   if (Platform.isMacOS || Platform.isIOS) {
-    yield 'pgp_flutter.framework/pgp_flutter';
+    yield 'pgp.framework/pgp';
   }
   // A Flutter desktop bundle, or a CLI shipped next to the library.
   final executableDir = File(Platform.resolvedExecutable).parent.path;
@@ -31,10 +32,10 @@ Iterable<String> _candidates() sync* {
   var dir = Directory.current.absolute;
   for (var i = 0; i < 6; i++) {
     for (final profile in ['release', 'debug']) {
-      yield '${dir.path}/packages/pgp_flutter/rust/target/$profile/$_fileName';
+      yield '${dir.path}/packages/pgp/rust/target/$profile/$_fileName';
       // The CNG build, which needs no perl or NASM on Windows.
       if (Platform.isWindows) {
-        yield '${dir.path}/packages/pgp_flutter/windows/rust/target/$profile/$_fileName';
+        yield '${dir.path}/packages/pgp/windows/rust/target/$profile/$_fileName';
       }
     }
     final parent = dir.parent;
@@ -84,7 +85,7 @@ DynamicLibrary _loadLibrary() {
   throw ArgumentError(
     'Failed to load the pgp_ffi native library. Build it with '
     '`cargo build --release --manifest-path '
-    'packages/pgp_flutter/rust/Cargo.toml`, depend on pgp_flutter in a '
+    'packages/pgp/rust/Cargo.toml`, depend on pgp in a '
     'Flutter app, or set PGP_DART_LIB.\n'
     'Resolved executable: ${Platform.resolvedExecutable}\n'
     'Current directory: ${Directory.current.path}\n'

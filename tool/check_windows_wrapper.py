@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check packages/pgp_flutter/windows/rust against the crate it compiles.
+"""Check packages/pgp/windows/rust against the crate it compiles.
 
 The Windows wrapper builds ../../rust/src/lib.rs with the CNG backend, so its
 [dependencies] must match the crate's apart from the backend selection, and
@@ -27,8 +27,8 @@ def strip_backend(dependencies):
 
 
 def check(repo):
-    crate = tomllib.loads((repo / "packages/pgp_flutter/rust/Cargo.toml").read_text())
-    wrapper = tomllib.loads((repo / "packages/pgp_flutter/windows/rust/Cargo.toml").read_text())
+    crate = tomllib.loads((repo / "packages/pgp/rust/Cargo.toml").read_text())
+    wrapper = tomllib.loads((repo / "packages/pgp/windows/rust/Cargo.toml").read_text())
     problems = []
     if strip_backend(crate["dependencies"]) != strip_backend(wrapper["dependencies"]):
         problems.append(f"dependencies differ: {strip_backend(crate['dependencies'])} != {strip_backend(wrapper['dependencies'])}")
@@ -52,7 +52,7 @@ def main():
         print(f"windows/rust: {problem}", file=sys.stderr)
     if problems:
         sys.exit(1)
-    print("windows/rust matches packages/pgp_flutter/rust")
+    print("windows/rust matches packages/pgp/rust")
 
 
 if __name__ == "__main__":

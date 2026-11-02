@@ -8,8 +8,8 @@ This is a [melos](https://melos.invertase.dev) monorepo:
 | Package | What it is |
 |---|---|
 | [`packages/pgp_dart`](packages/pgp_dart) | Pure Dart (no Flutter); works in CLI tools. Reaches Sequoia over `dart:ffi`. |
-| [`packages/pgp_flutter`](packages/pgp_flutter) | Flutter plugin. Builds the native library automatically (via cargokit) and re-exports the `pgp_dart` API. |
-| [`packages/pgp_flutter/rust`](packages/pgp_flutter/rust) | The `pgp-ffi` Rust crate (the C ABI behind the bindings), kept inside `pgp_flutter` so it ships with that package. Links a statically built OpenSSL by default; Windows builds wrap it with Sequoia's CNG backend (`windows/rust`). |
+| [`packages/pgp`](packages/pgp) | Flutter plugin. Builds the native library automatically (via cargokit) and re-exports the `pgp_dart` API. |
+| [`packages/pgp/rust`](packages/pgp/rust) | The `pgp-ffi` Rust crate (the C ABI behind the bindings), kept inside `pgp` so it ships with that package. Links a statically built OpenSSL by default; Windows builds wrap it with Sequoia's CNG backend (`windows/rust`). |
 
 ## Quick start (Dart CLI)
 
@@ -21,7 +21,7 @@ final cert = pgp.generateKey('someone@example.org');
 ```
 
 Build the native library first:
-`cargo build --release --manifest-path packages/pgp_flutter/rust/Cargo.toml`.
+`cargo build --release --manifest-path packages/pgp/rust/Cargo.toml`.
 
 ## Status
 
@@ -42,18 +42,18 @@ Driven by [melos](https://melos.invertase.dev) (config lives in the root
 
 ```sh
 dart run melos run native:build   # build the Rust shared library
-dart run melos run analyze        # analyze pgp_dart + pgp_flutter
+dart run melos run analyze        # analyze pgp_dart + pgp
 dart run melos run format         # check Dart formatting (format:fix to apply)
 dart run melos run test           # Dart + Flutter tests
 dart run melos run native:test    # Rust crate tests
 ```
 
 `flutter test integration_test -d <device>` (from
-`packages/pgp_flutter/example`) runs the on-device round-trip tests.
+`packages/pgp/example`) runs the on-device round-trip tests.
 
 ## Package candidates and verification
 
-The native crate lives in `packages/pgp_flutter/rust` so its complete source
+The native crate lives in `packages/pgp/rust` so its complete source
 ships in the Flutter publication archive. See [the payload gate](tool/README.md)
 for actual pub archive checks, fresh consumer builds and native loading checks:
 

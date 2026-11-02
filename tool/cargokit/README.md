@@ -17,7 +17,7 @@ pre-provision the actual resolved dependency closure separately.
 Use a local clone of the private Cargokit fork (no network is accessed by the tool):
 
 ```
-python3 tool/cargokit_sync.py --manifest tool/cargokit/manifest.json --source ../cargokit-sync --check packages/pgp_flutter/cargokit
+python3 tool/cargokit_sync.py --manifest tool/cargokit/manifest.json --source ../cargokit-sync --check packages/pgp/cargokit
 python3 tool/cargokit_sync.py --manifest tool/cargokit/manifest.json --source ../cargokit-sync --output /tmp/pgp-cargokit-next
 ```
 
@@ -38,7 +38,7 @@ relevant platform CI before a guarded private commit/push. GitHub mirroring and
 publication remain owner-only steps. Do not drop a local patch merely because an
 upstream update makes it fail to apply.
 
-pgp_flutter vendors the same recipe as sound_flutter. The three patch groups
+pgp vendors the same recipe as sound_flutter. The three patch groups
 preserve existing Windows symlink/PowerShell support, Gradle9
 ExecOperations, and suppression of the Apple environment dump. The independent
 native payload gate forces source compilation regardless of ancestor user cache

@@ -3,7 +3,7 @@
 Run `python3 -m unittest discover -s tool/tests -v`, then
 `python3 tool/native_payload.py --config tool/payload.json --mode candidate --output /tmp/pgp-candidate`.
 Use a new output directory for each run. The gate snapshots the checkout,
-creates the actual `pgp_dart` and `pgp_flutter` pub archives with the pinned
+creates the actual `pgp_dart` and `pgp` pub archives with the pinned
 Dart SDK, checks their sources, Cargo path closure, platform contracts and
 cargokit provenance, then builds a fresh Flutter consumer from the extracted
 archives. On Linux and Windows a Dart consumer also loads the exact bundled
@@ -16,7 +16,7 @@ Provision Dart 3.13.2, Flutter, Python 3.12+, and Rust stable plus the required
 targets; the gate never installs them. Android, iOS, Linux and macOS builds
 compile OpenSSL from source (perl, make, a C compiler, and libclang for
 bindgen). Windows builds use
-`packages/pgp_flutter/windows/rust`, which wraps the crate with the CNG backend
+`packages/pgp/windows/rust`, which wraps the crate with the CNG backend
 and needs only the MSVC toolchain. The gate sets RUSTUP_WINDOWS_PATH_ADD_BIN=1
 for its children: rustup proxies installed as symlinks cannot be started by
 processes that enforce redirection trust (os error 448). The gate copies the
