@@ -10,12 +10,10 @@ CLI tools build the crate once (see
 [Building the native library](#building-the-native-library)).
 
 ## Status
-Development code. The native library links a statically built OpenSSL by
-default; Sequoia's pure-Rust backend, which is experimental and variable-time
-with open timing advisories, is an opt-in `crypto-rust` feature for
-development. See
-[`pgp_flutter/rust/README.md`](../pgp_flutter/rust/README.md). Neither package
-is published to pub.dev yet.
+The native library links a statically built OpenSSL by default; Sequoia's
+pure-Rust backend, which is experimental and variable-time with open timing
+advisories, is an opt-in `crypto-rust` feature for development. See
+[`pgp_flutter/rust/README.md`](../pgp_flutter/rust/README.md).
 
 ## Getting started
 Add the package:

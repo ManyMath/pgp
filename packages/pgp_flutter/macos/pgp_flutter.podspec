@@ -4,13 +4,13 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'pgp_flutter'
-  s.version          = '0.0.1-dev.10'
+  s.version          = '0.0.1'
   s.summary          = 'OpenPGP for Flutter, backed by Sequoia.'
   s.description      = <<-DESC
 Builds the pgp_ffi Rust OpenPGP library via cargokit and links it into the
 pgp_flutter plugin for use over FFI.
                        DESC
-  s.homepage         = 'https://github.com/ManyMath/pgp-dart'
+  s.homepage         = 'https://github.com/ManyMath/pgp'
   s.license          = { :file => '../LICENSE' }
   s.author           = 'ManyMath LLC'
 

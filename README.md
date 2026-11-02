@@ -25,8 +25,6 @@ Build the native library first:
 
 ## Status
 
-Development code; neither package is published to pub.dev yet.
-
 | Host | Status |
 |---|---|
 | Linux | Working: CLI, tests, the example integration test and the payload gate (Ubuntu 24.04, also WSL2) |

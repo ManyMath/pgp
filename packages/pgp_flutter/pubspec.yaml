@@ -3,10 +3,9 @@ description: >-
   OpenPGP for Flutter, backed by Sequoia. Integrates the `pgp_dart` package
   and uses cargokit to build the native pgp_ffi Rust library and use it via
   FFI.
-version: 0.0.1-dev.10
-repository: https://github.com/ManyMath/pgp-dart
-issue_tracker: https://github.com/ManyMath/pgp-dart/issues
-publish_to: none # development code, see the pgp_dart README status
+version: 0.0.1
+repository: https://github.com/ManyMath/pgp/tree/main/packages/pgp_flutter
+issue_tracker: https://github.com/ManyMath/pgp/issues
 topics:
   - pgp
   - openpgp
@@ -22,7 +21,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  pgp_dart: ^0.0.1-dev.10
+  pgp_dart: ^0.0.1
 
 dev_dependencies:
   flutter_test:

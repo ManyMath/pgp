@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 description = "pgp-ffi built on the Windows CNG backend for pgp_flutter's cargokit."
 license = "MIT"
-repository = "https://github.com/ManyMath/pgp-dart"
+repository = "https://github.com/ManyMath/pgp"
 
 # Compiles the same source as ../../rust with the CNG backend. The crate's
 # default vendored OpenSSL needs a native perl and NASM to build with MSVC; CNG

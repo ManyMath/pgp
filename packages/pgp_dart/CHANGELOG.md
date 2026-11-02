@@ -1,3 +1,10 @@
+## 0.0.1
+
+- First release as `pgp_dart`. Collects the 0.0.1-dev.2 through
+  0.0.1-dev.10 changes below; of the development versions only
+  0.0.1-dev.1 was published, as `pgp`.
+- The repository is now https://github.com/ManyMath/pgp.
+
 ## 0.0.1-dev.10
 
 - Renamed the package from `pgp` to `pgp_dart` and moved it to

@@ -1,9 +1,5 @@
 {
   "dart_sdk": "3.13.2",
-  "prepare": [
-    "python3",
-    "tool/stage_candidate.py"
-  ],
   "packages": [
     {
       "name": "pgp_dart",
@@ -42,7 +38,7 @@
   ],
   "flutter_package": "pgp_flutter",
   "dart_package": "pgp_dart",
-  "hosted_dart_constraint": "^0.0.1-dev.10",
+  "hosted_dart_constraint": "^0.0.1",
   "library_name": "libpgp_ffi.so",
   "library_environment": "PGP_DART_LIB",
   "flutter_main": "import 'package:flutter/material.dart';\nimport 'package:pgp_flutter/pgp_flutter.dart';\nFuture<void> main() async { WidgetsFlutterBinding.ensureInitialized(); final backend = await PgpFlutter.ensureInitialized(); runApp(MaterialApp(home: Text(backend))); }\n",

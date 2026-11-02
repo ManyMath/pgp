@@ -2,10 +2,9 @@ name: pgp_dart
 description: >-
   OpenPGP for Dart, backed by Sequoia. Dart (no Flutter dependency) with the
   native pgp_ffi library reached over FFI.
-version: 0.0.1-dev.10
-repository: https://github.com/ManyMath/pgp-dart
-issue_tracker: https://github.com/ManyMath/pgp-dart/issues
-publish_to: none # development code, see README status
+version: 0.0.1
+repository: https://github.com/ManyMath/pgp/tree/main/packages/pgp_dart
+issue_tracker: https://github.com/ManyMath/pgp/issues
 topics:
   - pgp
   - openpgp
