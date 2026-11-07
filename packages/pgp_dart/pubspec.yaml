@@ -1,0 +1,20 @@
+name: pgp_dart
+description: >-
+  Pure-Dart OpenPGP models, algorithm preferences, error codes, and value
+  types with no native or Flutter dependencies.
+version: 0.0.2
+repository: https://github.com/ManyMath/pgp/tree/main/packages/pgp_dart
+issue_tracker: https://github.com/ManyMath/pgp/issues
+topics:
+  - pgp
+  - openpgp
+  - cryptography
+
+environment:
+  sdk: ^3.10.0
+
+resolution: workspace
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.24.0

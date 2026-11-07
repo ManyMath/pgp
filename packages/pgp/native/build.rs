@@ -10,6 +10,8 @@ fn main() {
 
     #[cfg(feature = "header")]
     {
+        println!("cargo:rerun-if-changed=src/lib.rs");
+        println!("cargo:rerun-if-changed=cbindgen.toml");
         let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let config = cbindgen::Config::from_file(format!("{crate_dir}/cbindgen.toml")).unwrap();
         cbindgen::Builder::new()

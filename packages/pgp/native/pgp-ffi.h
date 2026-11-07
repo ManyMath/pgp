@@ -866,6 +866,68 @@ int32_t pgp_certificate_verify_detached_ex(const struct Certificate *cert,
                                            uint8_t *hash_algo_out);
 
 /**
+ * Sign raw `data` (`len` bytes) with `cert`, writing an ASCII-armored detached
+ * signature to `*armored_sig`. Caller must free `*armored_sig` with `pgp_free()`.
+ *
+ * # Safety
+ * `cert` and `armored_sig` must be non-null; `data` must point to at least
+ * `len` valid bytes when `len > 0`.
+ */
+int32_t pgp_certificate_sign_detached_bytes(const struct Certificate *cert,
+                                            const uint8_t *data,
+                                            uintptr_t len,
+                                            char **armored_sig);
+
+/**
+ * Stream `input_path` and write an ASCII-armored detached signature to
+ * `output_sig_path`. Removes any partial output file on failure.
+ *
+ * # Safety
+ * `cert`, `input_path`, and `output_sig_path` must be non-null UTF-8 paths.
+ */
+int32_t pgp_certificate_sign_detached_file(const struct Certificate *cert,
+                                           const char *input_path,
+                                           const char *output_sig_path);
+
+/**
+ * Verify a detached signature `sig` (`sig_len` bytes, ASCII-armored or raw
+ * binary OpenPGP signature packet) against raw `data` (`data_len` bytes).
+ *
+ * # Safety
+ * `cert` and `sig` must be non-null; `sig` must point to `sig_len` bytes, and
+ * `data` must point to `data_len` bytes when `data_len > 0`.
+ * `signer_fingerprint`, `signature_creation_epoch`, and `hash_algo_out` may
+ * be null.
+ */
+int32_t pgp_certificate_verify_detached_bytes(const struct Certificate *cert,
+                                              const uint8_t *data,
+                                              uintptr_t data_len,
+                                              const uint8_t *sig,
+                                              uintptr_t sig_len,
+                                              int64_t at_epoch,
+                                              char **signer_fingerprint,
+                                              int64_t *signature_creation_epoch,
+                                              uint8_t *hash_algo_out);
+
+/**
+ * Stream `file_path` and verify it against detached signature `sig` (`sig_len`
+ * bytes, ASCII-armored or raw binary OpenPGP signature packet).
+ *
+ * # Safety
+ * `cert`, `file_path`, and `sig` must be non-null; `sig` must point to
+ * `sig_len` valid bytes. `signer_fingerprint`, `signature_creation_epoch`,
+ * and `hash_algo_out` may be null.
+ */
+int32_t pgp_certificate_verify_detached_file(const struct Certificate *cert,
+                                             const char *file_path,
+                                             const uint8_t *sig,
+                                             uintptr_t sig_len,
+                                             int64_t at_epoch,
+                                             char **signer_fingerprint,
+                                             int64_t *signature_creation_epoch,
+                                             uint8_t *hash_algo_out);
+
+/**
  * Generate a new certificate carrying `user_id` with an optional validity
  * period. `validity_seconds == 0` means no expiry.
  * Writes the new certificate to `*new_cert`. Caller must free with

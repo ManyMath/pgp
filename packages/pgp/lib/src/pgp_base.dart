@@ -2,442 +2,29 @@ import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:pgp_dart/pgp_dart.dart';
 
-import 'native_library.dart';
 import 'pgp-ffi_bindings_generated.dart' as ffi;
 
-/// The bindings to the native functions in [nativeLibrary].
-final ffi.PgpFfiBindings _bindings = ffi.PgpFfiBindings(nativeLibrary);
-
-/// RFC 4880 reason-for-revocation codes accepted by [Certificate.revoke],
-/// [Certificate.revokeSubkey], and [Certificate.revokeUserId].
-enum RevocationReason {
-  /// No reason given.
-  unspecified(0),
-
-  /// The key has been superseded by a new one.
-  keySuperseded(1),
-
-  /// The key material has been compromised.
-  keyCompromised(2),
-
-  /// The key is retired and no longer used.
-  keyRetired(3),
-
-  /// The user ID is no longer valid (user IDs only).
-  userIdRetired(32);
-
-  const RevocationReason(this.code);
-
-  /// The wire-format RFC 4880 reason code.
-  final int code;
-}
-
-/// Key algorithm/curve to use when generating a new certificate, passed to
-/// [PGP.generateKeyWithCipherSuite].
-enum CipherSuite {
-  /// EdDSA and ECDH over Curve25519 with SHA512 and AES256 (the default
-  /// used by [PGP.generateKey]).
-  cv25519(0),
-
-  /// 3072-bit RSA with SHA512 and AES256.
-  rsa3k(1),
-
-  /// EdDSA and ECDH over NIST P-256 with SHA256 and AES256.
-  p256(2),
-
-  /// EdDSA and ECDH over NIST P-384 with SHA384 and AES256.
-  p384(3),
-
-  /// EdDSA and ECDH over NIST P-521 with SHA512 and AES256.
-  p521(4),
-
-  /// 2048-bit RSA with SHA512 and AES256.
-  rsa2k(5),
-
-  /// 4096-bit RSA with SHA512 and AES256.
-  rsa4k(6);
-
-  const CipherSuite(this.code);
-
-  /// The code `pgp_key_generate_with_cipher_suite` expects.
-  final int code;
-}
-
-/// RFC 4880 symmetric-cipher codes, for use with
-/// [Certificate.setPreferences]' `symmetricAlgorithms` list and as read back
-/// from [Certificate.preferences].
-enum SymmetricAlgorithmPreference {
-  tripleDes(2),
-  cast5(3),
-  blowfish(4),
-  aes128(7),
-  aes192(8),
-  aes256(9),
-  twofish(10),
-  camellia128(11),
-  camellia192(12),
-  camellia256(13);
-
-  const SymmetricAlgorithmPreference(this.code);
-
-  /// The RFC 4880 wire-format algorithm code.
-  final int code;
-}
-
-/// RFC 4880 hash-algorithm codes, for use with [Certificate.setPreferences]'
-/// `hashAlgorithms` list and as read back from [Certificate.preferences].
-enum HashAlgorithmPreference {
-  sha1(2),
-  sha256(8),
-  sha384(9),
-  sha512(10),
-  sha224(11);
-
-  const HashAlgorithmPreference(this.code);
-
-  /// The RFC 4880 wire-format algorithm code.
-  final int code;
-}
-
-/// RFC 4880 compression-algorithm codes, for use with
-/// [Certificate.setPreferences]' `compressionAlgorithms` list and as read
-/// back from [Certificate.preferences].
-enum CompressionAlgorithmPreference {
-  uncompressed(0),
-  zip(1),
-  zlib(2),
-  bzip2(3);
-
-  const CompressionAlgorithmPreference(this.code);
-
-  /// The RFC 4880 wire-format algorithm code.
-  final int code;
-}
-
-/// A certificate's algorithm-preference and features self-signature
-/// subpackets, as set by [Certificate.setPreferences] and read back by
-/// [Certificate.preferences].
-class CertificatePreferences {
-  /// Preferred symmetric algorithms, most preferred first.
-  final List<int> symmetricAlgorithms;
-
-  /// Preferred hash algorithms, most preferred first.
-  final List<int> hashAlgorithms;
-
-  /// Preferred compression algorithms, most preferred first.
-  final List<int> compressionAlgorithms;
-
-  /// The raw RFC 4880 Features subpacket first octet (bit 0 = SEIPDv1,
-  /// bit 1 = AEAD, bit 2 = SEIPDv2), or 0 if absent.
-  final int features;
-
-  const CertificatePreferences({
-    required this.symmetricAlgorithms,
-    required this.hashAlgorithms,
-    required this.compressionAlgorithms,
-    required this.features,
-  });
-}
-
-/// A snapshot of certificate metadata returned by [Certificate.info].
-class CertificateInfo {
-  /// 40-character uppercase hex fingerprint (v4 key).
-  final String fingerprint;
-
-  /// All user IDs on the certificate, including revoked ones.
-  final List<String> userIds;
-
-  /// Primary key expiration as seconds since the Unix epoch; 0 means no expiry.
-  final int expiryEpoch;
-
-  const CertificateInfo({
-    required this.fingerprint,
-    required this.userIds,
-    required this.expiryEpoch,
-  });
-
-  /// Whether this certificate has an expiry date set.
-  bool get hasExpiry => expiryEpoch != 0;
-
-  /// The expiry as a UTC [DateTime], or null if no expiry is set.
-  DateTime? get expiryDate => hasExpiry
-      ? DateTime.fromMillisecondsSinceEpoch(expiryEpoch * 1000, isUtc: true)
-      : null;
-}
-
-/// A subkey listed by [Certificate.subkeys].
-class SubkeyInfo {
-  /// Zero-based index, matching the `subkeyIndex` accepted by
-  /// [Certificate.revokeSubkey].
-  final int index;
-
-  /// 40-character uppercase hex fingerprint of this subkey.
-  final String fingerprint;
-
-  /// Whether this subkey is usable for transport encryption.
-  final bool canEncrypt;
-
-  /// Whether this subkey is usable for signing.
-  final bool canSign;
-
-  /// Whether this subkey is usable for authentication.
-  final bool canAuthenticate;
-
-  /// Whether this subkey has been revoked.
-  final bool isRevoked;
-
-  /// This subkey's own expiration as seconds since the Unix epoch; 0 means no
-  /// expiry. Independent of the primary key's expiry and of other subkeys'
-  /// expiry: see [Certificate.setSubkeyExpiry].
-  final int expiryEpoch;
-
-  const SubkeyInfo({
-    required this.index,
-    required this.fingerprint,
-    required this.canEncrypt,
-    required this.canSign,
-    required this.canAuthenticate,
-    required this.isRevoked,
-    required this.expiryEpoch,
-  });
-
-  /// Whether this subkey has an expiry date set.
-  bool get hasExpiry => expiryEpoch != 0;
-
-  /// This subkey's expiry as a UTC [DateTime], or null if it has no expiry.
-  DateTime? get expiryDate => hasExpiry
-      ? DateTime.fromMillisecondsSinceEpoch(expiryEpoch * 1000, isUtc: true)
-      : null;
-}
-
-/// A user ID listed by [Certificate.userIdsInfo].
-class UserIdInfo {
-  /// The user ID's raw text (e.g. `"Alice <alice@example.org>"`).
-  final String userId;
-
-  /// Whether this user ID has been revoked.
-  final bool isRevoked;
-
-  /// Whether this is the certificate's primary user ID.
-  final bool isPrimary;
-
-  /// Expiration of this user ID's binding signature: i.e. how long the
-  /// certification itself is valid for: as seconds since the Unix epoch;
-  /// 0 means it doesn't expire.
-  final int expiryEpoch;
-
-  const UserIdInfo({
-    required this.userId,
-    required this.isRevoked,
-    required this.isPrimary,
-    required this.expiryEpoch,
-  });
-
-  /// Whether this user ID's binding signature has an expiry set.
-  bool get hasExpiry => expiryEpoch != 0;
-
-  /// This user ID's binding-signature expiry as a UTC [DateTime], or null if
-  /// it has no expiry.
-  DateTime? get expiryDate => hasExpiry
-      ? DateTime.fromMillisecondsSinceEpoch(expiryEpoch * 1000, isUtc: true)
-      : null;
-}
-
-/// A third-party certifier of a user ID, listed by
-/// [Certificate.userIdCertifications].
-class CertifierInfo {
-  /// 40-character uppercase hex fingerprint of the certifying key (the
-  /// certificate that called [Certificate.certifyUserId]).
-  final String fingerprint;
-
-  /// Whether this certifier has since revoked their certification via
-  /// [Certificate.revokeUserIdCertification].
-  final bool isRevoked;
-
-  /// The RFC 4880 Trust Signature "level" (depth) recorded via
-  /// [Certificate.certifyUserIdWithTrust], or 0 if this certification
-  /// carries no trust signature (e.g. a plain [Certificate.certifyUserId]).
-  final int trustDepth;
-
-  /// The RFC 4880 Trust Signature "trust amount" (degree of confidence, out
-  /// of 255) recorded via [Certificate.certifyUserIdWithTrust], or 0 if this
-  /// certification carries no trust signature.
-  final int trustAmount;
-
-  /// Whether this certification may be published: `false` for a "local
-  /// certification" made via [Certificate.certifyUserIdExportable] with
-  /// `exportable: false` (GnuPG's `--lsign-key`), which
-  /// [Certificate.exportPublicArmored] silently omits. Always `true` for a
-  /// plain [Certificate.certifyUserId] certification.
-  final bool isExportable;
-
-  const CertifierInfo({
-    required this.fingerprint,
-    required this.isRevoked,
-    this.trustDepth = 0,
-    this.trustAmount = 0,
-    this.isExportable = true,
-  });
-}
-
-/// A designated revoker configured on a certificate via
-/// [Certificate.addDesignatedRevoker], as reported by
-/// [Certificate.revocationKeys].
-class DesignatedRevoker {
-  /// 40-character uppercase hex fingerprint of the authorized revoker.
-  final String fingerprint;
-
-  /// RFC 4880's "sensitive revocation key" flag: a hint that
-  /// implementations should not publish this relationship to keyservers.
-  final bool sensitive;
-
-  const DesignatedRevoker({
-    required this.fingerprint,
-    required this.sensitive,
-  });
-}
-
-/// Whole-certificate revocation status returned by
-/// [Certificate.revocationInfo].
-class RevocationInfo {
-  /// Whether the certificate has been revoked (via [Certificate.revoke]).
-  final bool isRevoked;
-
-  /// The RFC 4880 reason-for-revocation code recorded on the revocation
-  /// signature, or 0 if not revoked or no reason was given.
-  final int reasonCode;
-
-  /// The human-readable revocation message, or an empty string if not
-  /// revoked or none was given.
-  final String message;
-
-  const RevocationInfo({
-    required this.isRevoked,
-    required this.reasonCode,
-    required this.message,
-  });
-}
-
-/// Plaintext and signer fingerprint returned by [Certificate.decryptAndVerify],
-/// [Certificate.verifyWithSigner], and [Certificate.verifyCleartextWithSigner].
-class SignedPlaintext {
-  /// The verified (and, for [Certificate.decryptAndVerify], decrypted) plaintext.
-  final String plaintext;
-
-  /// 40-character uppercase hex fingerprint of the signing subkey.
-  final String signerFingerprint;
-
-  /// The signature's own creation time, as seconds since the Unix epoch, or
-  /// 0 if absent.
-  final int signedAtEpoch;
-
-  const SignedPlaintext({
-    required this.plaintext,
-    required this.signerFingerprint,
-    this.signedAtEpoch = 0,
-  });
-
-  /// Whether [signedAtEpoch] carries a value.
-  bool get hasSignedAt => signedAtEpoch > 0;
-
-  /// [signedAtEpoch] as a [DateTime], or null if absent.
-  DateTime? get signedAtDate => hasSignedAt
-      ? DateTime.fromMillisecondsSinceEpoch(signedAtEpoch * 1000, isUtc: true)
-      : null;
-}
-
-/// Signer fingerprint and signature time returned by
-/// [Certificate.decryptAndVerifyFile]: the file-based counterpart of
-/// [SignedPlaintext], minus the plaintext itself since that's streamed to the
-/// output file rather than returned in memory.
-class FileSignatureInfo {
-  /// 40-character uppercase hex fingerprint of the signing subkey.
-  final String signerFingerprint;
-
-  /// The signature's own creation time, as seconds since the Unix epoch, or
-  /// 0 if absent.
-  final int signedAtEpoch;
-
-  const FileSignatureInfo({
-    required this.signerFingerprint,
-    this.signedAtEpoch = 0,
-  });
-
-  /// Whether [signedAtEpoch] carries a value.
-  bool get hasSignedAt => signedAtEpoch > 0;
-
-  /// [signedAtEpoch] as a [DateTime], or null if absent.
-  DateTime? get signedAtDate => hasSignedAt
-      ? DateTime.fromMillisecondsSinceEpoch(signedAtEpoch * 1000, isUtc: true)
-      : null;
-}
-
-/// A message's symmetric session key, returned by [Certificate.sessionKey]
-/// without decrypting the message body: see that method for why this is
-/// useful (archival/escrow decryption without exposing a long-term key).
-class SessionKeyInfo {
-  /// The session key as an uppercase-hex string.
-  final String hex;
-
-  /// The RFC 4880 symmetric algorithm code the session key was generated
-  /// for. Pass straight through to [PGP.decryptWithSessionKey].
-  final int algo;
-
-  /// [algo] as a typed [SymmetricAlgorithmPreference], or `null` if it's a
-  /// code that enum doesn't cover (e.g. the legacy IDEA cipher, code `1`).
-  /// [algo] itself always carries the raw code either way.
-  SymmetricAlgorithmPreference? get algorithm {
-    for (final value in SymmetricAlgorithmPreference.values) {
-      if (value.code == algo) return value;
+/// Verifies that the bundled `pgp_ffi` native library is loaded and
+/// resolvable. Safe to call repeatedly.
+void ensureNativeLibrary() {
+  final out = calloc<Pointer<Char>>();
+  try {
+    final code = ffi.pgp_last_error_message(out);
+    if (code == 0 && out.value != nullptr) {
+      ffi.pgp_free(out.value.cast());
     }
-    return null;
+  } finally {
+    calloc.free(out);
   }
-
-  const SessionKeyInfo({
-    required this.hex,
-    required this.algo,
-  });
 }
 
-/// Raw verified bytes and signer fingerprint returned by
-/// [Certificate.verifyBytesWithSigner].
-class VerifiedBytes {
-  /// The verified plaintext bytes.
-  final Uint8List plaintext;
-
-  /// 40-character uppercase hex fingerprint of the signing subkey.
-  final String signerFingerprint;
-
-  /// The signature's own creation time, as seconds since the Unix epoch, or
-  /// 0 if absent.
-  final int signedAtEpoch;
-
-  const VerifiedBytes({
-    required this.plaintext,
-    required this.signerFingerprint,
-    this.signedAtEpoch = 0,
-  });
-
-  /// Whether [signedAtEpoch] carries a value.
-  bool get hasSignedAt => signedAtEpoch > 0;
-
-  /// [signedAtEpoch] as a [DateTime], or null if absent.
-  DateTime? get signedAtDate => hasSignedAt
-      ? DateTime.fromMillisecondsSinceEpoch(signedAtEpoch * 1000, isUtc: true)
-      : null;
+void _check(int code) {
+  if (code != 0) throw _pgpError(code);
 }
 
-/// Status code returned by a `pgp-ffi` call.
-class PgpException implements Exception {
-  /// The non-zero `FFIError` code returned by `pgp-ffi`.
-  final int code;
-
-  PgpException(this.code);
-
-  @override
-  String toString() => 'PgpException: pgp-ffi returned $code';
-}
+PgpException _pgpError(int code) => PgpException(code);
 
 /// A handle to an OpenPGP certificate owned by `pgp-ffi`.
 ///
@@ -453,14 +40,12 @@ class Certificate {
   Pointer<ffi.Certificate> get pointer => _ptr;
 
   /// Exports the certificate as an ASCII-armored public key block.
-  String exportPublicArmored() => _exportArmored(
-        _bindings.pgp_certificate_export_public_armored,
-      );
+  String exportPublicArmored() =>
+      _exportArmored(ffi.pgp_certificate_export_public_armored);
 
   /// Exports the certificate as an ASCII-armored secret key block.
-  String exportSecretArmored() => _exportArmored(
-        _bindings.pgp_certificate_export_secret_armored,
-      );
+  String exportSecretArmored() =>
+      _exportArmored(ffi.pgp_certificate_export_secret_armored);
 
   /// Exports the certificate as an ASCII-armored secret key block.
   ///
@@ -468,16 +53,12 @@ class Certificate {
   String exportArmored() => exportSecretArmored();
 
   /// Encrypts [plaintext] to this certificate as an ASCII-armored message.
-  String encrypt(String plaintext) => _transformString(
-        plaintext,
-        _bindings.pgp_certificate_encrypt_string,
-      );
+  String encrypt(String plaintext) =>
+      _transformString(plaintext, ffi.pgp_certificate_encrypt_string);
 
   /// Decrypts an ASCII-armored [message] with this secret certificate.
-  String decrypt(String message) => _transformString(
-        message,
-        _bindings.pgp_certificate_decrypt_string,
-      );
+  String decrypt(String message) =>
+      _transformString(message, ffi.pgp_certificate_decrypt_string);
 
   /// Encrypts the file at [inputPath] to this certificate, streaming the
   /// ASCII-armored result to [outputPath].
@@ -492,12 +73,12 @@ class Certificate {
     final inPtr = inputPath.toNativeUtf8();
     final outPtr = outputPath.toNativeUtf8();
     try {
-      final code = _bindings.pgp_certificate_encrypt_file(
+      final code = ffi.pgp_certificate_encrypt_file(
         _ptr,
         inPtr.cast(),
         outPtr.cast(),
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
     } finally {
       calloc.free(inPtr);
       calloc.free(outPtr);
@@ -514,12 +95,12 @@ class Certificate {
     final inPtr = inputPath.toNativeUtf8();
     final outPtr = outputPath.toNativeUtf8();
     try {
-      final code = _bindings.pgp_certificate_decrypt_file(
+      final code = ffi.pgp_certificate_decrypt_file(
         _ptr,
         inPtr.cast(),
         outPtr.cast(),
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
     } finally {
       calloc.free(inPtr);
       calloc.free(outPtr);
@@ -541,15 +122,15 @@ class Certificate {
     final hexOut = calloc<Pointer<Char>>();
     final algoOut = calloc<Uint8>();
     try {
-      final code = _bindings.pgp_message_session_key(
+      final code = ffi.pgp_message_session_key(
         _ptr,
         msgPtr.cast(),
         hexOut,
         algoOut,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final hex = hexOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(hexOut.value.cast());
+      ffi.pgp_free(hexOut.value.cast());
       return SessionKeyInfo(hex: hex, algo: algoOut.value);
     } finally {
       calloc.free(msgPtr);
@@ -559,10 +140,8 @@ class Certificate {
   }
 
   /// Signs [plaintext] with this secret certificate as an armored message.
-  String sign(String plaintext) => _transformString(
-        plaintext,
-        _bindings.pgp_certificate_sign_string,
-      );
+  String sign(String plaintext) =>
+      _transformString(plaintext, ffi.pgp_certificate_sign_string);
 
   /// Verifies an armored signed [message] with this certificate.
   ///
@@ -579,18 +158,18 @@ class Certificate {
     final fpOut = calloc<Pointer<Char>>();
     final epochOut = calloc<Int64>();
     try {
-      final code = _bindings.pgp_certificate_verify_string(
+      final code = ffi.pgp_certificate_verify_string(
         _ptr,
         msgPtr.cast(),
         plaintextOut,
         fpOut,
         epochOut,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(plaintextOut.value.cast());
-      _bindings.pgp_free(fpOut.value.cast());
+      ffi.pgp_free(plaintextOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -610,9 +189,9 @@ class Certificate {
     final out = calloc<Pointer<Char>>();
     try {
       final code = call(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final armored = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return armored;
     } finally {
       calloc.free(out);
@@ -625,15 +204,16 @@ class Certificate {
       Pointer<ffi.Certificate>,
       Pointer<Char>,
       Pointer<Pointer<Char>>,
-    ) call,
+    )
+    call,
   ) {
     final inputPointer = input.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
       final code = call(_ptr, inputPointer.cast(), out);
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(inputPointer);
@@ -651,8 +231,14 @@ class Certificate {
   }) {
     final messagePointer = message?.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_revoke(
-          _ptr, reason.code, messagePointer?.cast() ?? nullptr, out));
+      return _derive(
+        (out) => ffi.pgp_certificate_revoke(
+          _ptr,
+          reason.code,
+          messagePointer?.cast() ?? nullptr,
+          out,
+        ),
+      );
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
     }
@@ -668,15 +254,15 @@ class Certificate {
     final reasonOut = calloc<Uint8>();
     final messageOut = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_revocation_info(
+      final code = ffi.pgp_certificate_revocation_info(
         _ptr,
         revokedOut,
         reasonOut,
         messageOut,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final message = messageOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(messageOut.value.cast());
+      ffi.pgp_free(messageOut.value.cast());
       return RevocationInfo(
         isRevoked: revokedOut.value == 1,
         reasonCode: reasonOut.value,
@@ -703,15 +289,15 @@ class Certificate {
     final messagePointer = message?.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_generate_revocation_armored(
+      final code = ffi.pgp_certificate_generate_revocation_armored(
         _ptr,
         reason.code,
         messagePointer?.cast() ?? nullptr,
         out,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final armored = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return armored;
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
@@ -727,8 +313,13 @@ class Certificate {
   Certificate applyRevocationArmored(String revocationArmored) {
     final armoredPointer = revocationArmored.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_apply_revocation_armored(
-          _ptr, armoredPointer.cast(), out));
+      return _derive(
+        (out) => ffi.pgp_certificate_apply_revocation_armored(
+          _ptr,
+          armoredPointer.cast(),
+          out,
+        ),
+      );
     } finally {
       calloc.free(armoredPointer);
     }
@@ -746,8 +337,10 @@ class Certificate {
   /// Throws [PgpException] if this certificate's certification-capable
   /// secret key isn't available.
   Certificate addDesignatedRevoker(Certificate revoker) {
-    return _derive((out) => _bindings.pgp_certificate_add_designated_revoker(
-        _ptr, revoker._ptr, out));
+    return _derive(
+      (out) =>
+          ffi.pgp_certificate_add_designated_revoker(_ptr, revoker._ptr, out),
+    );
   }
 
   /// Returns the designated revokers configured on this certificate (via
@@ -755,10 +348,10 @@ class Certificate {
   List<DesignatedRevoker> revocationKeys() {
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_revocation_keys(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_revocation_keys(_ptr, out);
+      _check(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -792,16 +385,16 @@ class Certificate {
     final messagePointer = message?.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_generate_revocation_armored_by(
+      final code = ffi.pgp_certificate_generate_revocation_armored_by(
         _ptr,
         target._ptr,
         reason.code,
         messagePointer?.cast() ?? nullptr,
         out,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final armored = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return armored;
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
@@ -823,10 +416,13 @@ class Certificate {
   bool verifyDesignatedRevocation(Certificate revoker) {
     final out = calloc<Uint8>();
     try {
-      final code = _bindings.pgp_certificate_verify_designated_revocation(
-          _ptr, revoker._ptr, out);
+      final code = ffi.pgp_certificate_verify_designated_revocation(
+        _ptr,
+        revoker._ptr,
+        out,
+      );
       if (code == -4) return false; // NotFound
-      if (code != 0) throw PgpException(code);
+      _check(code);
       return out.value == 1;
     } finally {
       calloc.free(out);
@@ -853,11 +449,14 @@ class Certificate {
     int features = 0,
   }) {
     final symPtr = calloc<Uint8>(
-        symmetricAlgorithms.length.clamp(1, symmetricAlgorithms.length + 1));
+      symmetricAlgorithms.length.clamp(1, symmetricAlgorithms.length + 1),
+    );
     final hashPtr = calloc<Uint8>(
-        hashAlgorithms.length.clamp(1, hashAlgorithms.length + 1));
-    final compPtr = calloc<Uint8>(compressionAlgorithms.length
-        .clamp(1, compressionAlgorithms.length + 1));
+      hashAlgorithms.length.clamp(1, hashAlgorithms.length + 1),
+    );
+    final compPtr = calloc<Uint8>(
+      compressionAlgorithms.length.clamp(1, compressionAlgorithms.length + 1),
+    );
     try {
       for (var i = 0; i < symmetricAlgorithms.length; i++) {
         symPtr[i] = symmetricAlgorithms[i];
@@ -868,7 +467,8 @@ class Certificate {
       for (var i = 0; i < compressionAlgorithms.length; i++) {
         compPtr[i] = compressionAlgorithms[i];
       }
-      return _derive((out) => _bindings.pgp_certificate_set_preferences(
+      return _derive(
+        (out) => ffi.pgp_certificate_set_preferences(
           _ptr,
           symPtr,
           symmetricAlgorithms.length,
@@ -877,7 +477,9 @@ class Certificate {
           compPtr,
           compressionAlgorithms.length,
           features,
-          out));
+          out,
+        ),
+      );
     } finally {
       calloc.free(symPtr);
       calloc.free(hashPtr);
@@ -891,10 +493,10 @@ class Certificate {
   CertificatePreferences preferences() {
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_preferences(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_preferences(_ptr, out);
+      _check(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       final fields = raw.split('\t');
       List<int> parseCsv(String s) =>
           s.isEmpty ? [] : s.split(',').map(int.parse).toList();
@@ -910,16 +512,18 @@ class Certificate {
   }
 
   /// Adds a transport-encryption subkey, returning the updated certificate.
-  Certificate addTransportEncryptionSubkey() => _derive((out) =>
-      _bindings.pgp_certificate_add_transport_encryption_subkey(_ptr, out));
+  Certificate addTransportEncryptionSubkey() => _derive(
+    (out) => ffi.pgp_certificate_add_transport_encryption_subkey(_ptr, out),
+  );
 
   /// Adds a signing subkey, returning the updated certificate.
   Certificate addSigningSubkey() =>
-      _derive((out) => _bindings.pgp_certificate_add_signing_subkey(_ptr, out));
+      _derive((out) => ffi.pgp_certificate_add_signing_subkey(_ptr, out));
 
   /// Adds an authentication subkey, returning the updated certificate.
   Certificate addAuthenticationSubkey() => _derive(
-      (out) => _bindings.pgp_certificate_add_authentication_subkey(_ptr, out));
+    (out) => ffi.pgp_certificate_add_authentication_subkey(_ptr, out),
+  );
 
   /// Revokes the subkey at [index] (counting subkeys only), returning the
   /// updated certificate.
@@ -933,8 +537,15 @@ class Certificate {
   }) {
     final messagePointer = message?.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_revoke_subkey(
-          _ptr, index, reason.code, messagePointer?.cast() ?? nullptr, out));
+      return _derive(
+        (out) => ffi.pgp_certificate_revoke_subkey(
+          _ptr,
+          index,
+          reason.code,
+          messagePointer?.cast() ?? nullptr,
+          out,
+        ),
+      );
     } finally {
       if (messagePointer != null) calloc.free(messagePointer);
     }
@@ -944,8 +555,10 @@ class Certificate {
   Certificate addUserId(String userId) {
     final userIdPointer = userId.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_add_userid(
-          _ptr, userIdPointer.cast(), out));
+      return _derive(
+        (out) =>
+            ffi.pgp_certificate_add_userid(_ptr, userIdPointer.cast(), out),
+      );
     } finally {
       calloc.free(userIdPointer);
     }
@@ -963,12 +576,15 @@ class Certificate {
     final userIdPointer = userId.toNativeUtf8();
     final messagePointer = message?.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_revoke_userid(
+      return _derive(
+        (out) => ffi.pgp_certificate_revoke_userid(
           _ptr,
           userIdPointer.cast(),
           reason.code,
           messagePointer?.cast() ?? nullptr,
-          out));
+          out,
+        ),
+      );
     } finally {
       calloc.free(userIdPointer);
       if (messagePointer != null) calloc.free(messagePointer);
@@ -985,8 +601,14 @@ class Certificate {
   Certificate certifyUserId(Certificate target, String userId) {
     final userIdPointer = userId.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_certify_userid(
-          _ptr, target._ptr, userIdPointer.cast(), out));
+      return _derive(
+        (out) => ffi.pgp_certificate_certify_userid(
+          _ptr,
+          target._ptr,
+          userIdPointer.cast(),
+          out,
+        ),
+      );
     } finally {
       calloc.free(userIdPointer);
     }
@@ -1015,13 +637,15 @@ class Certificate {
     final userIdPointer = userId.toNativeUtf8();
     try {
       return _derive(
-          (out) => _bindings.pgp_certificate_certify_userid_with_trust(
-              _ptr,
-              target._ptr,
-              userIdPointer.cast(),
-              trustDepth,
-              trustAmount,
-              out));
+        (out) => ffi.pgp_certificate_certify_userid_with_trust(
+          _ptr,
+          target._ptr,
+          userIdPointer.cast(),
+          trustDepth,
+          trustAmount,
+          out,
+        ),
+      );
     } finally {
       calloc.free(userIdPointer);
     }
@@ -1047,14 +671,16 @@ class Certificate {
     final userIdPointer = userId.toNativeUtf8();
     final messagePointer = message?.toNativeUtf8();
     try {
-      return _derive((out) =>
-          _bindings.pgp_certificate_revoke_userid_certification(
-              _ptr,
-              target._ptr,
-              userIdPointer.cast(),
-              reason.code,
-              messagePointer?.cast() ?? nullptr,
-              out));
+      return _derive(
+        (out) => ffi.pgp_certificate_revoke_userid_certification(
+          _ptr,
+          target._ptr,
+          userIdPointer.cast(),
+          reason.code,
+          messagePointer?.cast() ?? nullptr,
+          out,
+        ),
+      );
     } finally {
       calloc.free(userIdPointer);
       if (messagePointer != null) calloc.free(messagePointer);
@@ -1071,8 +697,13 @@ class Certificate {
   Certificate setPrimaryUserId(String userId) {
     final userIdPointer = userId.toNativeUtf8();
     try {
-      return _derive((out) => _bindings.pgp_certificate_set_primary_userid(
-          _ptr, userIdPointer.cast(), out));
+      return _derive(
+        (out) => ffi.pgp_certificate_set_primary_userid(
+          _ptr,
+          userIdPointer.cast(),
+          out,
+        ),
+      );
     } finally {
       calloc.free(userIdPointer);
     }
@@ -1098,12 +729,14 @@ class Certificate {
     final userIdPointer = userId.toNativeUtf8();
     try {
       return _derive(
-          (out) => _bindings.pgp_certificate_certify_userid_exportable(
-              _ptr,
-              target._ptr,
-              userIdPointer.cast(),
-              exportable ? 1 : 0,
-              out));
+        (out) => ffi.pgp_certificate_certify_userid_exportable(
+          _ptr,
+          target._ptr,
+          userIdPointer.cast(),
+          exportable ? 1 : 0,
+          out,
+        ),
+      );
     } finally {
       calloc.free(userIdPointer);
     }
@@ -1122,18 +755,17 @@ class Certificate {
   ///
   /// Throws [PgpException] if [other] is not the same certificate as this one.
   Certificate merge(Certificate other) {
-    return _derive(
-        (out) => _bindings.pgp_certificate_merge(_ptr, other._ptr, out));
+    return _derive((out) => ffi.pgp_certificate_merge(_ptr, other._ptr, out));
   }
 
   /// Returns the primary key fingerprint as a 40-character uppercase hex string.
   String fingerprint() {
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_fingerprint(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_fingerprint(_ptr, out);
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(out);
@@ -1144,10 +776,10 @@ class Certificate {
   List<String> userIds() {
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_userids(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_userids(_ptr, out);
+      _check(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return raw.isEmpty ? [] : raw.split('\n');
     } finally {
       calloc.free(out);
@@ -1160,10 +792,10 @@ class Certificate {
   List<UserIdInfo> userIdsInfo() {
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_userids_info(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_userids_info(_ptr, out);
+      _check(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -1190,11 +822,14 @@ class Certificate {
     final userIdPointer = userId.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_userid_certifications(
-          _ptr, userIdPointer.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_userid_certifications(
+        _ptr,
+        userIdPointer.cast(),
+        out,
+      );
+      _check(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -1225,9 +860,13 @@ class Certificate {
     final userIdPointer = userId.toNativeUtf8();
     final out = calloc<Uint8>();
     try {
-      final code = _bindings.pgp_certificate_verify_userid_certification(
-          _ptr, issuer._ptr, userIdPointer.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_verify_userid_certification(
+        _ptr,
+        issuer._ptr,
+        userIdPointer.cast(),
+        out,
+      );
+      _check(code);
       return out.value == 1;
     } finally {
       calloc.free(userIdPointer);
@@ -1241,10 +880,10 @@ class Certificate {
   List<SubkeyInfo> subkeys() {
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_subkeys(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_subkeys(_ptr, out);
+      _check(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       if (raw.isEmpty) return [];
       return raw.split('\n').map((line) {
         final fields = line.split('\t');
@@ -1269,8 +908,8 @@ class Certificate {
   int expiryEpoch() {
     final out = calloc<Int64>();
     try {
-      final code = _bindings.pgp_certificate_expiry_epoch(_ptr, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_expiry_epoch(_ptr, out);
+      _check(code);
       return out.value;
     } finally {
       calloc.free(out);
@@ -1280,17 +919,15 @@ class Certificate {
   /// Returns a [CertificateInfo] snapshot combining fingerprint, user IDs,
   /// and expiry epoch in a single call.
   CertificateInfo info() => CertificateInfo(
-        fingerprint: fingerprint(),
-        userIds: userIds(),
-        expiryEpoch: expiryEpoch(),
-      );
+    fingerprint: fingerprint(),
+    userIds: userIds(),
+    expiryEpoch: expiryEpoch(),
+  );
 
   /// Signs [plaintext] with this secret certificate, returning an ASCII-armored
   /// detached signature (BEGIN PGP SIGNATURE). The plaintext is not modified.
-  String signDetached(String plaintext) => _transformString(
-        plaintext,
-        _bindings.pgp_certificate_sign_detached,
-      );
+  String signDetached(String plaintext) =>
+      _transformString(plaintext, ffi.pgp_certificate_sign_detached);
 
   /// Verifies [armoredSig] against [plaintext] using this certificate.
   ///
@@ -1300,9 +937,14 @@ class Certificate {
     final p1 = plaintext.toNativeUtf8();
     final p2 = armoredSig.toNativeUtf8();
     try {
-      final code = _bindings.pgp_certificate_verify_detached(
-          _ptr, p1.cast(), p2.cast(), nullptr, nullptr);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_verify_detached(
+        _ptr,
+        p1.cast(),
+        p2.cast(),
+        nullptr,
+        nullptr,
+      );
+      _check(code);
       return true;
     } finally {
       calloc.free(p1);
@@ -1320,11 +962,16 @@ class Certificate {
     final p2 = armoredSig.toNativeUtf8();
     final fpOut = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_verify_detached(
-          _ptr, p1.cast(), p2.cast(), fpOut, nullptr);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_verify_detached(
+        _ptr,
+        p1.cast(),
+        p2.cast(),
+        fpOut,
+        nullptr,
+      );
+      _check(code);
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(fpOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
       return fp;
     } finally {
       calloc.free(p1);
@@ -1342,8 +989,7 @@ class Certificate {
     final passphrasePtr = passphrase.toNativeUtf8();
     try {
       return _derive(
-        (out) =>
-            _bindings.pgp_certificate_unlock(_ptr, passphrasePtr.cast(), out),
+        (out) => ffi.pgp_certificate_unlock(_ptr, passphrasePtr.cast(), out),
       );
     } finally {
       calloc.free(passphrasePtr);
@@ -1363,8 +1009,7 @@ class Certificate {
     final passphrasePtr = passphrase.toNativeUtf8();
     try {
       return _derive(
-        (out) =>
-            _bindings.pgp_certificate_lock(_ptr, passphrasePtr.cast(), out),
+        (out) => ffi.pgp_certificate_lock(_ptr, passphrasePtr.cast(), out),
       );
     } finally {
       calloc.free(passphrasePtr);
@@ -1378,8 +1023,7 @@ class Certificate {
     final secs = (validity == null || validity == Duration.zero)
         ? 0
         : validity.inSeconds;
-    return _derive(
-        (out) => _bindings.pgp_certificate_set_expiry(_ptr, secs, out));
+    return _derive((out) => ffi.pgp_certificate_set_expiry(_ptr, secs, out));
   }
 
   /// Updates the expiry on the subkey at [index] (counting subkeys only,
@@ -1391,8 +1035,9 @@ class Certificate {
     final secs = (validity == null || validity == Duration.zero)
         ? 0
         : validity.inSeconds;
-    return _derive((out) =>
-        _bindings.pgp_certificate_set_subkey_expiry(_ptr, index, secs, out));
+    return _derive(
+      (out) => ffi.pgp_certificate_set_subkey_expiry(_ptr, index, secs, out),
+    );
   }
 
   /// Encrypts [data] bytes to this certificate, returning an ASCII-armored
@@ -1404,11 +1049,15 @@ class Certificate {
     }
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_encrypt_bytes(
-          _ptr, dataPtr.cast(), data.length, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_encrypt_bytes(
+        _ptr,
+        dataPtr.cast(),
+        data.length,
+        out,
+      );
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(dataPtr);
@@ -1423,12 +1072,16 @@ class Certificate {
     final outPtr = calloc<Pointer<Uint8>>();
     final outLen = calloc<UintPtr>();
     try {
-      final code = _bindings.pgp_certificate_decrypt_bytes(
-          _ptr, msgPtr.cast(), outPtr, outLen);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_decrypt_bytes(
+        _ptr,
+        msgPtr.cast(),
+        outPtr,
+        outLen,
+      );
+      _check(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
-      _bindings.pgp_free(outPtr.value.cast());
+      ffi.pgp_free(outPtr.value.cast());
       return result;
     } finally {
       calloc.free(msgPtr);
@@ -1446,11 +1099,15 @@ class Certificate {
     }
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_certificate_sign_bytes(
-          _ptr, dataPtr.cast(), data.length, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_sign_bytes(
+        _ptr,
+        dataPtr.cast(),
+        data.length,
+        out,
+      );
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(dataPtr);
@@ -1465,12 +1122,18 @@ class Certificate {
     final outPtr = calloc<Pointer<Uint8>>();
     final outLen = calloc<UintPtr>();
     try {
-      final code = _bindings.pgp_certificate_verify_bytes(
-          _ptr, msgPtr.cast(), outPtr, outLen, nullptr, nullptr);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_verify_bytes(
+        _ptr,
+        msgPtr.cast(),
+        outPtr,
+        outLen,
+        nullptr,
+        nullptr,
+      );
+      _check(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
-      _bindings.pgp_free(outPtr.value.cast());
+      ffi.pgp_free(outPtr.value.cast());
       return result;
     } finally {
       calloc.free(msgPtr);
@@ -1488,14 +1151,20 @@ class Certificate {
     final fpOut = calloc<Pointer<Char>>();
     final epochOut = calloc<Int64>();
     try {
-      final code = _bindings.pgp_certificate_verify_bytes(
-          _ptr, msgPtr.cast(), outPtr, outLen, fpOut, epochOut);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_verify_bytes(
+        _ptr,
+        msgPtr.cast(),
+        outPtr,
+        outLen,
+        fpOut,
+        epochOut,
+      );
+      _check(code);
       final len = outLen.value;
       final result = Uint8List.fromList(outPtr.value.asTypedList(len));
-      _bindings.pgp_free(outPtr.value.cast());
+      ffi.pgp_free(outPtr.value.cast());
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(fpOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
       return VerifiedBytes(
         plaintext: result,
         signerFingerprint: fp,
@@ -1513,10 +1182,8 @@ class Certificate {
   /// Signs [plaintext] using the Cleartext Signature Framework (RFC 4880 section 7),
   /// returning a "-----BEGIN PGP SIGNED MESSAGE-----" block. The plaintext is
   /// human-readable inside the block.
-  String signCleartext(String plaintext) => _transformString(
-        plaintext,
-        _bindings.pgp_certificate_sign_cleartext,
-      );
+  String signCleartext(String plaintext) =>
+      _transformString(plaintext, ffi.pgp_certificate_sign_cleartext);
 
   /// Verifies a cleartext-signed [message] (BEGIN PGP SIGNED MESSAGE) using
   /// this certificate. Returns the plaintext if the signature is valid.
@@ -1534,18 +1201,18 @@ class Certificate {
     final fpOut = calloc<Pointer<Char>>();
     final epochOut = calloc<Int64>();
     try {
-      final code = _bindings.pgp_certificate_verify_cleartext(
+      final code = ffi.pgp_certificate_verify_cleartext(
         _ptr,
         msgPtr.cast(),
         plaintextOut,
         fpOut,
         epochOut,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(plaintextOut.value.cast());
-      _bindings.pgp_free(fpOut.value.cast());
+      ffi.pgp_free(plaintextOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -1570,7 +1237,7 @@ class Certificate {
     final fpOut = calloc<Pointer<Char>>();
     final epochOut = calloc<Int64>();
     try {
-      final code = _bindings.pgp_decrypt_and_verify_string(
+      final code = ffi.pgp_decrypt_and_verify_string(
         _ptr,
         verifyCert._ptr,
         msgPtr.cast(),
@@ -1578,11 +1245,11 @@ class Certificate {
         fpOut,
         epochOut,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(plaintextOut.value.cast());
-      _bindings.pgp_free(fpOut.value.cast());
+      ffi.pgp_free(plaintextOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -1615,7 +1282,7 @@ class Certificate {
     final fpOut = calloc<Pointer<Char>>();
     final epochOut = calloc<Int64>();
     try {
-      final code = _bindings.pgp_decrypt_and_verify_file(
+      final code = ffi.pgp_decrypt_and_verify_file(
         _ptr,
         verifyCert._ptr,
         inPtr.cast(),
@@ -1623,9 +1290,9 @@ class Certificate {
         fpOut,
         epochOut,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(fpOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
       return FileSignatureInfo(
         signerFingerprint: fp,
         signedAtEpoch: epochOut.value,
@@ -1647,11 +1314,15 @@ class Certificate {
     final ppPtr = passphrase.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_encrypt_and_sign_string_symmetric(
-          _ptr, ptPtr.cast(), ppPtr.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_encrypt_and_sign_string_symmetric(
+        _ptr,
+        ptPtr.cast(),
+        ppPtr.cast(),
+        out,
+      );
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(ptPtr);
@@ -1674,7 +1345,7 @@ class Certificate {
     final fpOut = calloc<Pointer<Char>>();
     final epochOut = calloc<Int64>();
     try {
-      final code = _bindings.pgp_decrypt_and_verify_string_symmetric(
+      final code = ffi.pgp_decrypt_and_verify_string_symmetric(
         _ptr,
         msgPtr.cast(),
         ppPtr.cast(),
@@ -1682,11 +1353,11 @@ class Certificate {
         fpOut,
         epochOut,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final pt = plaintextOut.value.cast<Utf8>().toDartString();
       final fp = fpOut.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(plaintextOut.value.cast());
-      _bindings.pgp_free(fpOut.value.cast());
+      ffi.pgp_free(plaintextOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
       return SignedPlaintext(
         plaintext: pt,
         signerFingerprint: fp,
@@ -1702,14 +1373,14 @@ class Certificate {
   }
 
   /// Frees the native certificate.  The handle must not be used afterwards.
-  void dispose() => _bindings.pgp_certificate_free(_ptr);
+  void dispose() => ffi.pgp_certificate_free(_ptr);
 
   /// Runs a `pgp-ffi` call that writes a new certificate to its out-pointer.
   Certificate _derive(int Function(Pointer<Pointer<ffi.Certificate>>) call) {
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
       final code = call(out);
-      if (code != 0) throw PgpException(code);
+      _check(code);
       return Certificate._(out.value);
     } finally {
       calloc.free(out);
@@ -1732,10 +1403,10 @@ class PGP {
     final msgPtr = armoredMessage.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_message_recipient_key_ids(msgPtr.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_message_recipient_key_ids(msgPtr.cast(), out);
+      _check(code);
       final raw = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return raw.isEmpty ? [] : raw.split('\n');
     } finally {
       calloc.free(msgPtr);
@@ -1756,15 +1427,15 @@ class PGP {
     final msgPtr = armoredMessage.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_decrypt_with_session_key(
+      final code = ffi.pgp_decrypt_with_session_key(
         hexPtr.cast(),
         sessionKeyInfo.algo,
         msgPtr.cast(),
         out,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(hexPtr);
@@ -1779,7 +1450,9 @@ class PGP {
   /// Throws [PgpException] if [recipients] is empty or no certificate has a
   /// usable transport-encryption subkey.
   static String encryptToRecipients(
-      List<Certificate> recipients, String plaintext) {
+    List<Certificate> recipients,
+    String plaintext,
+  ) {
     if (recipients.isEmpty) throw PgpException(-4); // FFIError::NotFound
 
     final certsArray = calloc<Pointer<ffi.Certificate>>(recipients.length);
@@ -1789,15 +1462,15 @@ class PGP {
     final plaintextPtr = plaintext.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_encrypt_string_to_recipients(
+      final code = ffi.pgp_encrypt_string_to_recipients(
         certsArray.cast(),
         recipients.length,
         plaintextPtr.cast(),
         out,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(certsArray);
@@ -1824,13 +1497,13 @@ class PGP {
     final inPtr = inputPath.toNativeUtf8();
     final outPtr = outputPath.toNativeUtf8();
     try {
-      final code = _bindings.pgp_encrypt_to_recipients_file(
+      final code = ffi.pgp_encrypt_to_recipients_file(
         certsArray.cast(),
         recipients.length,
         inPtr.cast(),
         outPtr.cast(),
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
     } finally {
       calloc.free(certsArray);
       calloc.free(inPtr);
@@ -1841,7 +1514,9 @@ class PGP {
   /// Encrypts raw [data] bytes to all [recipients], returning an
   /// ASCII-armored message any recipient can [Certificate.decryptBytes].
   static String encryptBytesToRecipients(
-      List<Certificate> recipients, Uint8List data) {
+    List<Certificate> recipients,
+    Uint8List data,
+  ) {
     if (recipients.isEmpty) throw PgpException(-4);
 
     final certsArray = calloc<Pointer<ffi.Certificate>>(recipients.length);
@@ -1854,16 +1529,16 @@ class PGP {
     }
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_encrypt_bytes_to_recipients(
+      final code = ffi.pgp_encrypt_bytes_to_recipients(
         certsArray.cast(),
         recipients.length,
         dataPtr.cast(),
         data.length,
         out,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(certsArray);
@@ -1891,16 +1566,16 @@ class PGP {
     final plaintextPtr = plaintext.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_encrypt_and_sign_string(
+      final code = ffi.pgp_encrypt_and_sign_string(
         signer._ptr,
         certsArray.cast(),
         recipients.length,
         plaintextPtr.cast(),
         out,
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(certsArray);
@@ -1930,14 +1605,14 @@ class PGP {
     final inPtr = inputPath.toNativeUtf8();
     final outPtr = outputPath.toNativeUtf8();
     try {
-      final code = _bindings.pgp_encrypt_and_sign_file(
+      final code = ffi.pgp_encrypt_and_sign_file(
         signer._ptr,
         certsArray.cast(),
         recipients.length,
         inPtr.cast(),
         outPtr.cast(),
       );
-      if (code != 0) throw PgpException(code);
+      _check(code);
     } finally {
       calloc.free(certsArray);
       calloc.free(inPtr);
@@ -1952,11 +1627,14 @@ class PGP {
     final ppPtr = passphrase.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_encrypt_string_symmetric(
-          ptPtr.cast(), ppPtr.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_encrypt_string_symmetric(
+        ptPtr.cast(),
+        ppPtr.cast(),
+        out,
+      );
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(ptPtr);
@@ -1974,11 +1652,14 @@ class PGP {
     final ppPtr = passphrase.toNativeUtf8();
     final out = calloc<Pointer<Char>>();
     try {
-      final code = _bindings.pgp_decrypt_string_symmetric(
-          msgPtr.cast(), ppPtr.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_decrypt_string_symmetric(
+        msgPtr.cast(),
+        ppPtr.cast(),
+        out,
+      );
+      _check(code);
       final result = out.value.cast<Utf8>().toDartString();
-      _bindings.pgp_free(out.value.cast());
+      ffi.pgp_free(out.value.cast());
       return result;
     } finally {
       calloc.free(msgPtr);
@@ -1992,8 +1673,8 @@ class PGP {
     final userIdPointer = userId.toNativeUtf8();
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
-      final code = _bindings.pgp_key_generate(userIdPointer.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_key_generate(userIdPointer.cast(), out);
+      _check(code);
       return Certificate._(out.value);
     } finally {
       calloc.free(userIdPointer);
@@ -2004,13 +1685,19 @@ class PGP {
   /// Generates a new certificate carrying [userId] using [cipherSuite]
   /// instead of the default [CipherSuite.cv25519]: e.g. to produce an RSA
   /// key for interoperating with a target that requires one.
-  Certificate generateKeyWithCipherSuite(String userId, CipherSuite cipherSuite) {
+  Certificate generateKeyWithCipherSuite(
+    String userId,
+    CipherSuite cipherSuite,
+  ) {
     final userIdPointer = userId.toNativeUtf8();
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
-      final code = _bindings.pgp_key_generate_with_cipher_suite(
-          userIdPointer.cast(), cipherSuite.code, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_key_generate_with_cipher_suite(
+        userIdPointer.cast(),
+        cipherSuite.code,
+        out,
+      );
+      _check(code);
       return Certificate._(out.value);
     } finally {
       calloc.free(userIdPointer);
@@ -2027,9 +1714,12 @@ class PGP {
       final secs = (validity == null || validity == Duration.zero)
           ? 0
           : validity.inSeconds;
-      final code =
-          _bindings.pgp_key_generate_with_expiry(userIdPtr.cast(), secs, out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_key_generate_with_expiry(
+        userIdPtr.cast(),
+        secs,
+        out,
+      );
+      _check(code);
       return Certificate._(out.value);
     } finally {
       calloc.free(userIdPtr);
@@ -2044,9 +1734,12 @@ class PGP {
     final passphrasePtr = passphrase.toNativeUtf8();
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
-      final code = _bindings.pgp_key_generate_with_passphrase(
-          userIdPtr.cast(), passphrasePtr.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_key_generate_with_passphrase(
+        userIdPtr.cast(),
+        passphrasePtr.cast(),
+        out,
+      );
+      _check(code);
       return Certificate._(out.value);
     } finally {
       calloc.free(userIdPtr);
@@ -2060,9 +1753,8 @@ class PGP {
     final armoredPointer = armored.toNativeUtf8();
     final out = calloc<Pointer<ffi.Certificate>>();
     try {
-      final code =
-          _bindings.pgp_certificate_from_armored(armoredPointer.cast(), out);
-      if (code != 0) throw PgpException(code);
+      final code = ffi.pgp_certificate_from_armored(armoredPointer.cast(), out);
+      _check(code);
       return Certificate._(out.value);
     } finally {
       calloc.free(armoredPointer);

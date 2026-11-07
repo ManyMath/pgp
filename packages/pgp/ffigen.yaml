@@ -1,12 +1,12 @@
 name: PgpFfiBindings
-description: |
-  Bindings for `pgp-ffi`.  See the README for how to use this file.
+description: Bindings for `pgp-ffi`.
 output: 'lib/src/pgp-ffi_bindings_generated.dart'
+ffi-native:
 headers:
   entry-points:
-    - 'pgp-ffi/pgp-ffi.h'
+    - 'native/pgp-ffi.h'
   include-directives:
-    - 'pgp-ffi/pgp-ffi.h'
+    - 'native/pgp-ffi.h'
 preamble: |
   // ignore_for_file: always_specify_types
   // ignore_for_file: camel_case_types

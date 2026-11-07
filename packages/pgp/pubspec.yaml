@@ -1,0 +1,29 @@
+name: pgp
+description: >-
+  OpenPGP for Dart, backed by Sequoia over FFI and bundled via Dart build hooks.
+version: 0.0.2
+repository: https://github.com/ManyMath/pgp/tree/main/packages/pgp
+issue_tracker: https://github.com/ManyMath/pgp/issues
+topics:
+  - pgp
+  - openpgp
+  - cryptography
+  - ffi
+
+environment:
+  sdk: ^3.10.0
+
+resolution: workspace
+
+dependencies:
+  code_assets: ^2.2.0
+  crypto: ^3.0.6
+  ffi: ^2.1.3
+  hooks: ^2.2.0
+  native_toolchain_rust: ^1.0.7
+  pgp_dart: ^0.0.2
+
+dev_dependencies:
+  ffigen: ^23.0.0
+  lints: ^6.0.0
+  test: ^1.24.0
