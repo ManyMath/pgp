@@ -1,0 +1,32 @@
+name: Verify
+
+on:
+  push:
+    branches: [main, 'refactor/**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust checks
+        working-directory: packages/pgp/native
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --lib --tests --examples -- -D warnings
+          cargo test --locked --lib
+          cargo test --locked --lib --no-default-features --features crypto-rust
+          cargo build --release --locked --features header
+          git diff --exit-code pgp-ffi.h
+      - name: Dart workspace checks
+        env:
+          DASH__SUPPRESS_ANALYTICS: "true"
+        run: |
+          dart pub get
+          dart format --output none --set-exit-if-changed packages/pgp_dart packages/pgp
+          dart analyze packages/pgp_dart packages/pgp
+          (cd packages/pgp_dart && dart test)
+          (cd packages/pgp && dart test)
+          (cd packages/pgp && dart run example/pgp_example.dart >/dev/null)
+          ./tool/consumer_build.sh

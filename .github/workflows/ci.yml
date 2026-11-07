@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'refactor/**']
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust native crate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/pgp/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/pgp/native
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y perl pkg-config libclang-dev
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run clippy
+        run: cargo clippy --locked --lib --tests --examples -- -D warnings
+      - name: Run tests (default vendored OpenSSL backend)
+        run: cargo test --locked --lib
+      - name: Run tests (pure-Rust crypto backend)
+        run: cargo test --locked --lib --no-default-features --features crypto-rust
+      - name: Check Windows CNG target
+        run: cargo check --locked --target x86_64-pc-windows-msvc --no-default-features --features crypto-cng
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+      - name: Check advisories (default and Windows CNG)
+        run: |
+          cargo deny --locked check advisories
+          cargo deny --locked --config deny-windows-cng.toml check advisories
+      - name: Verify C header is up to date
+        run: |
+          cargo build --release --locked --features header
+          git diff --exit-code pgp-ffi.h
+      - name: Test C harness
+        run: |
+          gcc -Wall -Werror=implicit-function-declaration test.c -I. -L./target/release -lpgp_ffi -o test_runner
+          LD_LIBRARY_PATH=./target/release ./test_runner
+
+  dart:
+    name: Dart workspace (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y perl pkg-config libclang-dev
+      - name: Resolve workspace dependencies
+        run: dart pub get
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: dart format --output none --set-exit-if-changed packages/pgp_dart packages/pgp
+      - name: Analyze workspace packages
+        run: dart analyze packages/pgp_dart packages/pgp
+      - name: Test pgp_dart
+        working-directory: packages/pgp_dart
+        run: dart test
+      - name: Test pgp
+        working-directory: packages/pgp
+        run: dart test
+      - name: Run example
+        working-directory: packages/pgp
+        run: dart run example/pgp_example.dart >/dev/null
+      - name: Run consumer build (Unix)
+        if: runner.os != 'Windows'
+        run: ./tool/consumer_build.sh
+      - name: Build and run CLI consumer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dart build cli -t packages/pgp/example/pgp_example.dart -o build/cli_test
+          .\build\cli_test\bundle\bin\pgp_example.exe | Out-Null
+
+  flutter-android:
+    name: Flutter consumer (Linux and Android APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install Linux build dependencies and NDK
+        run: |
+          sudo apt-get update && sudo apt-get install -y perl pkg-config libclang-dev unzip
+          sdkmanager --install "ndk;27.2.12479018"
+      - name: Build Linux and APK Flutter consumers
+        env:
+          FLUTTER_SUPPRESS_ANALYTICS: "true"
+          KEEP: "1"
+        run: |
+          out=$(./tool/consumer_build.sh linux apk)
+          echo "$out"
+          workdir=$(echo "$out" | sed -n 's/^KEEP=1 preserved workspace: //p' | tail -n 1)
+          apk="$workdir/flutter_consumer/build/app/outputs/flutter-apk/app-release.apk"
+          unzip -o "$apk" "lib/*/libpgp_ffi.so" -d "$workdir/apk_libs"
+          for so in "$workdir/apk_libs"/lib/*/libpgp_ffi.so; do
+            echo "Checking $so"
+            if readelf -d "$so" | grep -qiE 'relr|6fffe00'; then
+              echo "ERROR: RELR relocation found in $so"
+              exit 1
+            fi
+          done
+          for abi in arm64-v8a x86_64; do
+            so="$workdir/apk_libs/lib/$abi/libpgp_ffi.so"
+            readelf -lW "$so" | grep -E 'LOAD.*0x4000$'
+          done
