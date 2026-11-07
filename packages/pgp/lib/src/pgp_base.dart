@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
 
@@ -24,7 +25,43 @@ void _check(int code) {
   if (code != 0) throw _pgpError(code);
 }
 
-PgpException _pgpError(int code) => PgpException(code);
+PgpException _pgpError(int code) {
+  final out = calloc<Pointer<Char>>();
+  try {
+    final msgCode = ffi.pgp_last_error_message(out);
+    if (msgCode == 0 && out.value != nullptr) {
+      final detail = out.value.cast<Utf8>().toDartString();
+      ffi.pgp_free(out.value.cast());
+      if (detail.isNotEmpty) {
+        return PgpException(code, detail);
+      }
+    }
+  } finally {
+    calloc.free(out);
+  }
+  return PgpException(code);
+}
+
+int _atEpoch(DateTime? at) {
+  if (at == null) return 0;
+  final epoch = at.toUtc().millisecondsSinceEpoch ~/ 1000;
+  if (epoch <= 0) {
+    throw ArgumentError.value(
+      at,
+      'at',
+      'Reference timestamp must be after 1970-01-01T00:00:00Z.',
+    );
+  }
+  return epoch;
+}
+
+Pointer<Uint8> _allocBytes(Uint8List bytes) {
+  final ptr = calloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
+  if (bytes.isNotEmpty) {
+    ptr.asTypedList(bytes.length).setAll(0, bytes);
+  }
+  return ptr;
+}
 
 /// A handle to an OpenPGP certificate owned by `pgp-ffi`.
 ///
@@ -145,41 +182,34 @@ class Certificate {
 
   /// Verifies an armored signed [message] with this certificate.
   ///
-  /// Returns the message plaintext if the signature is valid.
-  String verify(String message) => verifyWithSigner(message).plaintext;
+  /// Returns the message plaintext if the signature is valid at [at] (defaulting
+  /// to the current system time when omitted).
+  String verify(String message, {DateTime? at}) =>
+      verifyWithSigner(message, at: at).plaintext;
 
   /// Verifies an armored signed [message] with this certificate.
   ///
   /// Returns the plaintext together with the fingerprint of the subkey that
-  /// produced the signature. Throws [PgpException] if verification fails.
-  SignedPlaintext verifyWithSigner(String message) {
+  /// produced the signature, optional creation timestamp, and hash algorithm.
+  /// Throws [PgpException] if verification fails.
+  SignedPlaintext verifyWithSigner(String message, {DateTime? at}) {
+    final epoch = _atEpoch(at);
     final msgPtr = message.toNativeUtf8();
-    final plaintextOut = calloc<Pointer<Char>>();
-    final fpOut = calloc<Pointer<Char>>();
-    final epochOut = calloc<Int64>();
     try {
-      final code = ffi.pgp_certificate_verify_string(
-        _ptr,
-        msgPtr.cast(),
-        plaintextOut,
-        fpOut,
-        epochOut,
-      );
-      _check(code);
-      final pt = plaintextOut.value.cast<Utf8>().toDartString();
-      final fp = fpOut.value.cast<Utf8>().toDartString();
-      ffi.pgp_free(plaintextOut.value.cast());
-      ffi.pgp_free(fpOut.value.cast());
-      return SignedPlaintext(
-        plaintext: pt,
-        signerFingerprint: fp,
-        signedAtEpoch: epochOut.value,
+      return _readSignedPlaintext(
+        (ptOut, fpOut, epochOut, hashOut) =>
+            ffi.pgp_certificate_verify_string_ex(
+              _ptr,
+              msgPtr.cast(),
+              epoch,
+              ptOut,
+              fpOut,
+              epochOut,
+              hashOut,
+            ),
       );
     } finally {
       calloc.free(msgPtr);
-      calloc.free(plaintextOut);
-      calloc.free(fpOut);
-      calloc.free(epochOut);
     }
   }
 
@@ -931,52 +961,173 @@ class Certificate {
 
   /// Verifies [armoredSig] against [plaintext] using this certificate.
   ///
-  /// Returns true if the signature is valid. Throws [PgpException] if
-  /// verification fails or the signature is malformed.
-  bool verifyDetached(String plaintext, String armoredSig) {
+  /// Returns true if the signature is valid at [at] (defaulting to current time).
+  /// Throws [PgpException] if verification fails or the signature is malformed.
+  bool verifyDetached(String plaintext, String armoredSig, {DateTime? at}) {
+    verifyDetachedWithSigner(plaintext, armoredSig, at: at);
+    return true;
+  }
+
+  /// Verifies [armoredSig] against [plaintext] using this certificate.
+  ///
+  /// Returns the fingerprint of the subkey that produced the signature.
+  /// Throws [PgpException] if verification fails or the signature is malformed.
+  String verifyDetachedSigner(
+    String plaintext,
+    String armoredSig, {
+    DateTime? at,
+  }) =>
+      verifyDetachedWithSigner(plaintext, armoredSig, at: at).signerFingerprint;
+
+  /// Verifies [armoredSig] against [plaintext] using this certificate.
+  ///
+  /// Returns signer fingerprint, signature timestamp, and hash algorithm.
+  /// Throws [PgpException] if verification fails or the signature is malformed.
+  FileSignatureInfo verifyDetachedWithSigner(
+    String plaintext,
+    String armoredSig, {
+    DateTime? at,
+  }) {
+    final epoch = _atEpoch(at);
     final p1 = plaintext.toNativeUtf8();
     final p2 = armoredSig.toNativeUtf8();
     try {
-      final code = ffi.pgp_certificate_verify_detached(
-        _ptr,
-        p1.cast(),
-        p2.cast(),
-        nullptr,
-        nullptr,
+      return _readFileSignatureInfo(
+        (fpOut, epochOut, hashOut) => ffi.pgp_certificate_verify_detached_ex(
+          _ptr,
+          p1.cast(),
+          p2.cast(),
+          epoch,
+          fpOut,
+          epochOut,
+          hashOut,
+        ),
       );
-      _check(code);
-      return true;
     } finally {
       calloc.free(p1);
       calloc.free(p2);
     }
   }
 
-  /// Verifies [armoredSig] against [plaintext] using this certificate.
-  ///
-  /// Returns the fingerprint of the subkey that produced the signature.
-  /// Throws [PgpException] if verification fails or the signature is
-  /// malformed.
-  String verifyDetachedSigner(String plaintext, String armoredSig) {
-    final p1 = plaintext.toNativeUtf8();
-    final p2 = armoredSig.toNativeUtf8();
-    final fpOut = calloc<Pointer<Char>>();
+  /// Signs raw [data] bytes with this secret certificate, returning an
+  /// ASCII-armored detached signature.
+  String signDetachedBytes(Uint8List data) {
+    final dataPtr = _allocBytes(data);
+    final out = calloc<Pointer<Char>>();
     try {
-      final code = ffi.pgp_certificate_verify_detached(
+      final code = ffi.pgp_certificate_sign_detached_bytes(
         _ptr,
-        p1.cast(),
-        p2.cast(),
-        fpOut,
-        nullptr,
+        dataPtr,
+        data.length,
+        out,
       );
       _check(code);
-      final fp = fpOut.value.cast<Utf8>().toDartString();
-      ffi.pgp_free(fpOut.value.cast());
-      return fp;
+      final result = out.value.cast<Utf8>().toDartString();
+      ffi.pgp_free(out.value.cast());
+      return result;
     } finally {
-      calloc.free(p1);
-      calloc.free(p2);
-      calloc.free(fpOut);
+      calloc.free(dataPtr);
+      calloc.free(out);
+    }
+  }
+
+  /// Streams the file at [inputPath] and writes an ASCII-armored detached
+  /// signature to [outputSigPath].
+  void signDetachedFile(String inputPath, String outputSigPath) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputSigPath.toNativeUtf8();
+    try {
+      final code = ffi.pgp_certificate_sign_detached_file(
+        _ptr,
+        inPtr.cast(),
+        outPtr.cast(),
+      );
+      _check(code);
+    } finally {
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  /// Verifies an ASCII-armored detached signature [armoredSig] against raw
+  /// [data] bytes.
+  FileSignatureInfo verifyDetachedBytes(
+    Uint8List data,
+    String armoredSig, {
+    DateTime? at,
+  }) => verifyDetachedRawBytes(
+    data,
+    Uint8List.fromList(utf8.encode(armoredSig)),
+    at: at,
+  );
+
+  /// Verifies a raw or armored detached [signatureBytes] against [data].
+  FileSignatureInfo verifyDetachedRawBytes(
+    Uint8List data,
+    Uint8List signatureBytes, {
+    DateTime? at,
+  }) {
+    final epoch = _atEpoch(at);
+    final dataPtr = _allocBytes(data);
+    final sigPtr = _allocBytes(signatureBytes);
+    try {
+      return _readFileSignatureInfo(
+        (fpOut, epochOut, hashOut) => ffi.pgp_certificate_verify_detached_bytes(
+          _ptr,
+          dataPtr,
+          data.length,
+          sigPtr,
+          signatureBytes.length,
+          epoch,
+          fpOut,
+          epochOut,
+          hashOut,
+        ),
+      );
+    } finally {
+      calloc.free(dataPtr);
+      calloc.free(sigPtr);
+    }
+  }
+
+  /// Streams the file at [filePath] and verifies an ASCII-armored detached
+  /// signature [armoredSig] against it.
+  FileSignatureInfo verifyDetachedFile(
+    String filePath,
+    String armoredSig, {
+    DateTime? at,
+  }) => verifyDetachedFileRaw(
+    filePath,
+    Uint8List.fromList(utf8.encode(armoredSig)),
+    at: at,
+  );
+
+  /// Streams the file at [filePath] and verifies raw or armored detached
+  /// [signatureBytes] against it.
+  FileSignatureInfo verifyDetachedFileRaw(
+    String filePath,
+    Uint8List signatureBytes, {
+    DateTime? at,
+  }) {
+    final epoch = _atEpoch(at);
+    final pathPtr = filePath.toNativeUtf8();
+    final sigPtr = _allocBytes(signatureBytes);
+    try {
+      return _readFileSignatureInfo(
+        (fpOut, epochOut, hashOut) => ffi.pgp_certificate_verify_detached_file(
+          _ptr,
+          pathPtr.cast(),
+          sigPtr,
+          signatureBytes.length,
+          epoch,
+          fpOut,
+          epochOut,
+          hashOut,
+        ),
+      );
+    } finally {
+      calloc.free(pathPtr);
+      calloc.free(sigPtr);
     }
   }
 
@@ -1116,48 +1267,31 @@ class Certificate {
   }
 
   /// Verifies an armored signed [message] with this certificate, returning
-  /// the raw verified bytes.
-  Uint8List verifyBytes(String message) {
-    final msgPtr = message.toNativeUtf8();
-    final outPtr = calloc<Pointer<Uint8>>();
-    final outLen = calloc<UintPtr>();
-    try {
-      final code = ffi.pgp_certificate_verify_bytes(
-        _ptr,
-        msgPtr.cast(),
-        outPtr,
-        outLen,
-        nullptr,
-        nullptr,
-      );
-      _check(code);
-      final len = outLen.value;
-      final result = Uint8List.fromList(outPtr.value.asTypedList(len));
-      ffi.pgp_free(outPtr.value.cast());
-      return result;
-    } finally {
-      calloc.free(msgPtr);
-      calloc.free(outPtr);
-      calloc.free(outLen);
-    }
-  }
+  /// the raw verified bytes at reference time [at] (defaulting to now).
+  Uint8List verifyBytes(String message, {DateTime? at}) =>
+      verifyBytesWithSigner(message, at: at).plaintext;
 
   /// Verifies an armored signed [message] with this certificate, returning
-  /// the raw verified bytes together with the signing subkey's fingerprint.
-  VerifiedBytes verifyBytesWithSigner(String message) {
+  /// the raw verified bytes together with the signing subkey's fingerprint,
+  /// optional timestamp, and hash algorithm.
+  VerifiedBytes verifyBytesWithSigner(String message, {DateTime? at}) {
+    final epoch = _atEpoch(at);
     final msgPtr = message.toNativeUtf8();
     final outPtr = calloc<Pointer<Uint8>>();
     final outLen = calloc<UintPtr>();
     final fpOut = calloc<Pointer<Char>>();
     final epochOut = calloc<Int64>();
+    final hashAlgoOut = calloc<Uint8>();
     try {
-      final code = ffi.pgp_certificate_verify_bytes(
+      final code = ffi.pgp_certificate_verify_bytes_ex(
         _ptr,
         msgPtr.cast(),
+        epoch,
         outPtr,
         outLen,
         fpOut,
         epochOut,
+        hashAlgoOut,
       );
       _check(code);
       final len = outLen.value;
@@ -1169,6 +1303,7 @@ class Certificate {
         plaintext: result,
         signerFingerprint: fp,
         signedAtEpoch: epochOut.value,
+        hashAlgorithmCode: hashAlgoOut.value,
       );
     } finally {
       calloc.free(msgPtr);
@@ -1176,6 +1311,7 @@ class Certificate {
       calloc.free(outLen);
       calloc.free(fpOut);
       calloc.free(epochOut);
+      calloc.free(hashAlgoOut);
     }
   }
 
@@ -1186,80 +1322,66 @@ class Certificate {
       _transformString(plaintext, ffi.pgp_certificate_sign_cleartext);
 
   /// Verifies a cleartext-signed [message] (BEGIN PGP SIGNED MESSAGE) using
-  /// this certificate. Returns the plaintext if the signature is valid.
-  String verifyCleartext(String message) =>
-      verifyCleartextWithSigner(message).plaintext;
+  /// this certificate. Returns the plaintext if the signature is valid at [at].
+  String verifyCleartext(String message, {DateTime? at}) =>
+      verifyCleartextWithSigner(message, at: at).plaintext;
 
   /// Verifies a cleartext-signed [message] (BEGIN PGP SIGNED MESSAGE) using
   /// this certificate.
   ///
   /// Returns the plaintext together with the fingerprint of the subkey that
-  /// produced the signature. Throws [PgpException] if verification fails.
-  SignedPlaintext verifyCleartextWithSigner(String message) {
+  /// produced the signature, optional timestamp, and hash algorithm.
+  /// Throws [PgpException] if verification fails.
+  SignedPlaintext verifyCleartextWithSigner(String message, {DateTime? at}) {
+    final epoch = _atEpoch(at);
     final msgPtr = message.toNativeUtf8();
-    final plaintextOut = calloc<Pointer<Char>>();
-    final fpOut = calloc<Pointer<Char>>();
-    final epochOut = calloc<Int64>();
     try {
-      final code = ffi.pgp_certificate_verify_cleartext(
-        _ptr,
-        msgPtr.cast(),
-        plaintextOut,
-        fpOut,
-        epochOut,
-      );
-      _check(code);
-      final pt = plaintextOut.value.cast<Utf8>().toDartString();
-      final fp = fpOut.value.cast<Utf8>().toDartString();
-      ffi.pgp_free(plaintextOut.value.cast());
-      ffi.pgp_free(fpOut.value.cast());
-      return SignedPlaintext(
-        plaintext: pt,
-        signerFingerprint: fp,
-        signedAtEpoch: epochOut.value,
+      return _readSignedPlaintext(
+        (ptOut, fpOut, epochOut, hashOut) =>
+            ffi.pgp_certificate_verify_cleartext_ex(
+              _ptr,
+              msgPtr.cast(),
+              epoch,
+              ptOut,
+              fpOut,
+              epochOut,
+              hashOut,
+            ),
       );
     } finally {
       calloc.free(msgPtr);
-      calloc.free(plaintextOut);
-      calloc.free(fpOut);
-      calloc.free(epochOut);
     }
   }
 
   /// Decrypts and verifies a signed+encrypted [message] produced by
   /// [PGP.encryptAndSign]. [verifyCert] is the signer's public certificate.
   ///
-  /// Returns [SignedPlaintext] with the plaintext and the signing subkey
-  /// fingerprint. Throws [PgpException] if decryption or verification fails.
-  SignedPlaintext decryptAndVerify(String message, Certificate verifyCert) {
+  /// Returns [SignedPlaintext] with the plaintext, signing subkey fingerprint,
+  /// optional timestamp, and hash algorithm. Throws [PgpException] if
+  /// decryption or verification fails.
+  SignedPlaintext decryptAndVerify(
+    String message,
+    Certificate verifyCert, {
+    DateTime? at,
+  }) {
+    final epoch = _atEpoch(at);
     final msgPtr = message.toNativeUtf8();
-    final plaintextOut = calloc<Pointer<Char>>();
-    final fpOut = calloc<Pointer<Char>>();
-    final epochOut = calloc<Int64>();
     try {
-      final code = ffi.pgp_decrypt_and_verify_string(
-        _ptr,
-        verifyCert._ptr,
-        msgPtr.cast(),
-        plaintextOut,
-        fpOut,
-        epochOut,
-      );
-      _check(code);
-      final pt = plaintextOut.value.cast<Utf8>().toDartString();
-      final fp = fpOut.value.cast<Utf8>().toDartString();
-      ffi.pgp_free(plaintextOut.value.cast());
-      ffi.pgp_free(fpOut.value.cast());
-      return SignedPlaintext(
-        plaintext: pt,
-        signerFingerprint: fp,
-        signedAtEpoch: epochOut.value,
+      return _readSignedPlaintext(
+        (ptOut, fpOut, epochOut, hashOut) =>
+            ffi.pgp_decrypt_and_verify_string_ex(
+              _ptr,
+              verifyCert._ptr,
+              msgPtr.cast(),
+              epoch,
+              ptOut,
+              fpOut,
+              epochOut,
+              hashOut,
+            ),
       );
     } finally {
       calloc.free(msgPtr);
-      calloc.free(plaintextOut);
-      calloc.free(fpOut);
-      calloc.free(epochOut);
     }
   }
 
@@ -1269,39 +1391,34 @@ class Certificate {
   /// file-based counterpart of [decryptAndVerify]; see [encryptFile] for why
   /// this exists.
   ///
-  /// Returns the signer's fingerprint and the signature's creation time.
-  /// Throws [PgpException] if decryption or verification fails; any output
-  /// file already created is removed first.
+  /// Returns the signer's fingerprint, signature creation time, and hash
+  /// algorithm. Throws [PgpException] if decryption or verification fails; any
+  /// output file already created is removed first.
   FileSignatureInfo decryptAndVerifyFile(
     String inputPath,
     String outputPath,
-    Certificate verifyCert,
-  ) {
+    Certificate verifyCert, {
+    DateTime? at,
+  }) {
+    final epoch = _atEpoch(at);
     final inPtr = inputPath.toNativeUtf8();
     final outPtr = outputPath.toNativeUtf8();
-    final fpOut = calloc<Pointer<Char>>();
-    final epochOut = calloc<Int64>();
     try {
-      final code = ffi.pgp_decrypt_and_verify_file(
-        _ptr,
-        verifyCert._ptr,
-        inPtr.cast(),
-        outPtr.cast(),
-        fpOut,
-        epochOut,
-      );
-      _check(code);
-      final fp = fpOut.value.cast<Utf8>().toDartString();
-      ffi.pgp_free(fpOut.value.cast());
-      return FileSignatureInfo(
-        signerFingerprint: fp,
-        signedAtEpoch: epochOut.value,
+      return _readFileSignatureInfo(
+        (fpOut, epochOut, hashOut) => ffi.pgp_decrypt_and_verify_file_ex(
+          _ptr,
+          verifyCert._ptr,
+          inPtr.cast(),
+          outPtr.cast(),
+          epoch,
+          fpOut,
+          epochOut,
+          hashOut,
+        ),
       );
     } finally {
       calloc.free(inPtr);
       calloc.free(outPtr);
-      calloc.free(fpOut);
-      calloc.free(epochOut);
     }
   }
 
@@ -1338,37 +1455,31 @@ class Certificate {
   ///
   /// Throws [PgpException] if the passphrase is wrong, the message has no
   /// SKESK, or it carries no valid signature from this certificate.
-  SignedPlaintext decryptAndVerifySymmetric(String message, String passphrase) {
+  SignedPlaintext decryptAndVerifySymmetric(
+    String message,
+    String passphrase, {
+    DateTime? at,
+  }) {
+    final epoch = _atEpoch(at);
     final msgPtr = message.toNativeUtf8();
     final ppPtr = passphrase.toNativeUtf8();
-    final plaintextOut = calloc<Pointer<Char>>();
-    final fpOut = calloc<Pointer<Char>>();
-    final epochOut = calloc<Int64>();
     try {
-      final code = ffi.pgp_decrypt_and_verify_string_symmetric(
-        _ptr,
-        msgPtr.cast(),
-        ppPtr.cast(),
-        plaintextOut,
-        fpOut,
-        epochOut,
-      );
-      _check(code);
-      final pt = plaintextOut.value.cast<Utf8>().toDartString();
-      final fp = fpOut.value.cast<Utf8>().toDartString();
-      ffi.pgp_free(plaintextOut.value.cast());
-      ffi.pgp_free(fpOut.value.cast());
-      return SignedPlaintext(
-        plaintext: pt,
-        signerFingerprint: fp,
-        signedAtEpoch: epochOut.value,
+      return _readSignedPlaintext(
+        (ptOut, fpOut, epochOut, hashOut) =>
+            ffi.pgp_decrypt_and_verify_string_symmetric_ex(
+              _ptr,
+              msgPtr.cast(),
+              ppPtr.cast(),
+              epoch,
+              ptOut,
+              fpOut,
+              epochOut,
+              hashOut,
+            ),
       );
     } finally {
       calloc.free(msgPtr);
       calloc.free(ppPtr);
-      calloc.free(plaintextOut);
-      calloc.free(fpOut);
-      calloc.free(epochOut);
     }
   }
 
@@ -1384,6 +1495,68 @@ class Certificate {
       return Certificate._(out.value);
     } finally {
       calloc.free(out);
+    }
+  }
+
+  SignedPlaintext _readSignedPlaintext(
+    int Function(
+      Pointer<Pointer<Char>> plaintextOut,
+      Pointer<Pointer<Char>> fpOut,
+      Pointer<Int64> epochOut,
+      Pointer<Uint8> hashAlgoOut,
+    )
+    call,
+  ) {
+    final plaintextOut = calloc<Pointer<Char>>();
+    final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
+    final hashAlgoOut = calloc<Uint8>();
+    try {
+      final code = call(plaintextOut, fpOut, epochOut, hashAlgoOut);
+      _check(code);
+      final pt = plaintextOut.value.cast<Utf8>().toDartString();
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      ffi.pgp_free(plaintextOut.value.cast());
+      ffi.pgp_free(fpOut.value.cast());
+      return SignedPlaintext(
+        plaintext: pt,
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+        hashAlgorithmCode: hashAlgoOut.value,
+      );
+    } finally {
+      calloc.free(plaintextOut);
+      calloc.free(fpOut);
+      calloc.free(epochOut);
+      calloc.free(hashAlgoOut);
+    }
+  }
+
+  FileSignatureInfo _readFileSignatureInfo(
+    int Function(
+      Pointer<Pointer<Char>> fpOut,
+      Pointer<Int64> epochOut,
+      Pointer<Uint8> hashAlgoOut,
+    )
+    call,
+  ) {
+    final fpOut = calloc<Pointer<Char>>();
+    final epochOut = calloc<Int64>();
+    final hashAlgoOut = calloc<Uint8>();
+    try {
+      final code = call(fpOut, epochOut, hashAlgoOut);
+      _check(code);
+      final fp = fpOut.value.cast<Utf8>().toDartString();
+      ffi.pgp_free(fpOut.value.cast());
+      return FileSignatureInfo(
+        signerFingerprint: fp,
+        signedAtEpoch: epochOut.value,
+        hashAlgorithmCode: hashAlgoOut.value,
+      );
+    } finally {
+      calloc.free(fpOut);
+      calloc.free(epochOut);
+      calloc.free(hashAlgoOut);
     }
   }
 }

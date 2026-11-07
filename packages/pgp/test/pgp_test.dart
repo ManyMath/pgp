@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -1778,6 +1779,228 @@ void main() {
 
       cert.dispose();
       updated.dispose();
+    });
+  });
+
+  group('library resolution & error diagnostics', () {
+    test('ensureNativeLibrary can be called repeatedly without error', () {
+      ensureNativeLibrary();
+      ensureNativeLibrary();
+    });
+
+    test('deprecated nativeLibraryOverridePath shim remains exported', () {
+      // ignore: deprecated_member_use
+      final prev = nativeLibraryOverridePath;
+      // ignore: deprecated_member_use
+      nativeLibraryOverridePath = '/nonexistent/libpgp_ffi.so';
+      // ignore: deprecated_member_use
+      expect(nativeLibraryOverridePath, '/nonexistent/libpgp_ffi.so');
+      // ignore: deprecated_member_use
+      nativeLibraryOverridePath = prev;
+    });
+
+    test('PgpException exposes code, enum, and Sequoia message detail', () {
+      try {
+        pgp.certificateFromArmored('not a valid pgp block');
+        fail('Expected PgpException');
+      } on PgpException catch (e) {
+        expect(e.code, PgpErrorCode.invalid.code);
+        expect(e.errorCode, PgpErrorCode.invalid);
+        expect(e.message, isNotNull);
+        expect(e.message, isNotEmpty);
+        expect(e.toString(), contains('PgpException('));
+      }
+
+      final alice = pgp.generateKey('err-alice@example.org');
+      final bob = pgp.generateKey('err-bob@example.org');
+      final sig = alice.signDetached('payload');
+      try {
+        bob.verifyDetached('payload', sig);
+        fail('Expected PgpException');
+      } on PgpException catch (e) {
+        expect(e.code, isNonZero);
+        expect(e.message, isNotNull);
+        expect(e.message, isNotEmpty);
+      } finally {
+        alice.dispose();
+        bob.dispose();
+      }
+    });
+  });
+
+  group('reference timestamp & hash metadata', () {
+    test('verification exposes hashAlgorithm and enforces reference at', () {
+      final key = pgp.generateKey('time-hash@example.org');
+      final pub = pgp.certificateFromArmored(key.exportPublicArmored());
+      const text = 'hello timestamped world';
+      final binary = Uint8List.fromList([0x00, 0x10, 0x20, 0x00, 0xff]);
+
+      final signedMsg = key.sign(text);
+      final signedClear = key.signCleartext(text);
+      final signedBytes = key.signBytes(binary);
+      final detachedTextSig = key.signDetached(text);
+      final symSigned = key.encryptAndSignSymmetric(text, 'pass');
+
+      final resMsg = pub.verifyWithSigner(signedMsg);
+      expect(resMsg.hashAlgorithmCode, HashAlgorithmPreference.sha512.code);
+      expect(resMsg.hashAlgorithm, HashAlgorithmPreference.sha512);
+      expect(resMsg.hasSignedAt, isTrue);
+
+      final resClear = pub.verifyCleartextWithSigner(signedClear);
+      expect(resClear.hashAlgorithmCode, HashAlgorithmPreference.sha512.code);
+      expect(resClear.hashAlgorithm, HashAlgorithmPreference.sha512);
+
+      final resBytes = pub.verifyBytesWithSigner(signedBytes);
+      expect(resBytes.plaintext, orderedEquals(binary));
+      expect(resBytes.hashAlgorithmCode, HashAlgorithmPreference.sha512.code);
+      expect(resBytes.hashAlgorithm, HashAlgorithmPreference.sha512);
+
+      final resDetached = pub.verifyDetachedWithSigner(text, detachedTextSig);
+      expect(
+        resDetached.hashAlgorithmCode,
+        HashAlgorithmPreference.sha512.code,
+      );
+      expect(resDetached.hashAlgorithm, HashAlgorithmPreference.sha512);
+
+      final resSym = pub.decryptAndVerifySymmetric(symSigned, 'pass');
+      expect(resSym.hashAlgorithmCode, HashAlgorithmPreference.sha512.code);
+      expect(resSym.hashAlgorithm, HashAlgorithmPreference.sha512);
+
+      final futureAt = DateTime.now().toUtc().add(const Duration(seconds: 60));
+      expect(pub.verify(signedMsg, at: futureAt), text);
+      expect(pub.verifyCleartext(signedClear, at: futureAt), text);
+      expect(pub.verifyBytes(signedBytes, at: futureAt), orderedEquals(binary));
+      expect(pub.verifyDetached(text, detachedTextSig, at: futureAt), isTrue);
+      expect(
+        pub.verifyDetachedSigner(text, detachedTextSig, at: futureAt),
+        resDetached.signerFingerprint,
+      );
+      expect(
+        pub
+            .decryptAndVerifySymmetric(symSigned, 'pass', at: futureAt)
+            .plaintext,
+        text,
+      );
+
+      final tooEarly = resMsg.signedAtDate!.subtract(
+        const Duration(minutes: 5),
+      );
+      expect(
+        () => pub.verifyWithSigner(signedMsg, at: tooEarly),
+        throwsA(
+          isA<PgpException>().having((e) => e.message, 'message', isNotNull),
+        ),
+      );
+      expect(
+        () => pub.verifyDetachedWithSigner(text, detachedTextSig, at: tooEarly),
+        throwsA(isA<PgpException>()),
+      );
+      expect(
+        () => pub.verifyWithSigner(
+          signedMsg,
+          at: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        ),
+        throwsArgumentError,
+      );
+
+      key.dispose();
+      pub.dispose();
+    });
+  });
+
+  group('binary & file detached signatures', () {
+    test('signDetachedBytes / verifyDetachedBytes handles embedded NULs', () {
+      final signer = pgp.generateKey('bin-detach@example.org');
+      final verifier = pgp.certificateFromArmored(signer.exportPublicArmored());
+
+      final payload = Uint8List.fromList(<int>[
+        0xde,
+        0xad,
+        0x00,
+        0xbe,
+        0xef,
+        0x00,
+        0xff,
+        0x7f,
+        0x01,
+      ]);
+      final emptyPayload = Uint8List(0);
+
+      final sig = signer.signDetachedBytes(payload);
+      expect(sig, contains('BEGIN PGP SIGNATURE'));
+      final info = verifier.verifyDetachedBytes(payload, sig);
+      expect(info.signerFingerprint, isNotEmpty);
+      expect(info.hasSignedAt, isTrue);
+      expect(info.hashAlgorithm, HashAlgorithmPreference.sha512);
+
+      final rawVerified = verifier.verifyDetachedRawBytes(
+        payload,
+        Uint8List.fromList(utf8.encode(sig)),
+      );
+      expect(rawVerified.signerFingerprint, info.signerFingerprint);
+
+      final emptySig = signer.signDetachedBytes(emptyPayload);
+      expect(
+        verifier.verifyDetachedBytes(emptyPayload, emptySig).signerFingerprint,
+        info.signerFingerprint,
+      );
+
+      final tampered = Uint8List.fromList(payload)..[2] = 0x42;
+      expect(
+        () => verifier.verifyDetachedBytes(tampered, sig),
+        throwsA(isA<PgpException>()),
+      );
+
+      signer.dispose();
+      verifier.dispose();
+    });
+
+    test('signDetachedFile / verifyDetachedFile streams binary files', () {
+      final tempDir = Directory.systemTemp.createTempSync('pgp_file_detach_');
+      final signer = pgp.generateKey('file-detach@example.org');
+      final verifier = pgp.certificateFromArmored(signer.exportPublicArmored());
+      try {
+        final dataFile = File('${tempDir.path}/archive.tar.bz2');
+        final sigFile = File('${tempDir.path}/archive.tar.bz2.asc');
+        final bytes = Uint8List(256 * 1024);
+        for (var i = 0; i < bytes.length; i++) {
+          bytes[i] = i % 256;
+        }
+        dataFile.writeAsBytesSync(bytes);
+
+        signer.signDetachedFile(dataFile.path, sigFile.path);
+        final armoredSig = sigFile.readAsStringSync();
+        expect(armoredSig, contains('BEGIN PGP SIGNATURE'));
+
+        final info = verifier.verifyDetachedFile(dataFile.path, armoredSig);
+        expect(info.signerFingerprint, isNotEmpty);
+        expect(info.hasSignedAt, isTrue);
+        expect(info.hashAlgorithm, HashAlgorithmPreference.sha512);
+
+        final rawInfo = verifier.verifyDetachedFileRaw(
+          dataFile.path,
+          sigFile.readAsBytesSync(),
+        );
+        expect(rawInfo.signerFingerprint, info.signerFingerprint);
+
+        bytes[131072] ^= 0xff;
+        dataFile.writeAsBytesSync(bytes);
+        expect(
+          () => verifier.verifyDetachedFile(dataFile.path, armoredSig),
+          throwsA(isA<PgpException>()),
+        );
+        expect(
+          () => verifier.verifyDetachedFile(
+            '${tempDir.path}/missing.bin',
+            armoredSig,
+          ),
+          throwsA(isA<PgpException>()),
+        );
+      } finally {
+        tempDir.deleteSync(recursive: true);
+        signer.dispose();
+        verifier.dispose();
+      }
     });
   });
 }

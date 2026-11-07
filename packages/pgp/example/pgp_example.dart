@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:pgp/pgp.dart';
 
@@ -25,9 +26,17 @@ void main() {
   print(publicCert.verifyDetached('hello detached OpenPGP', detached));
   print(cert.signCleartext('hello cleartext OpenPGP'));
 
-  // Raw bytes.
+  // Raw bytes & detached binary signature.
   final encryptedBytes = publicCert.encryptBytes(utf8.encode('hello bytes'));
   print(utf8.decode(cert.decryptBytes(encryptedBytes)));
+
+  final rawBinary = Uint8List.fromList(<int>[0x00, 0x01, 0x02, 0xff]);
+  final detachedBytesSig = cert.signDetachedBytes(rawBinary);
+  final binVerify = publicCert.verifyDetachedBytes(rawBinary, detachedBytesSig);
+  print(
+    'binary detached signer: ${binVerify.signerFingerprint} '
+    '(${binVerify.hashAlgorithm?.standardName})',
+  );
 
   // Multi-recipient and signed+encrypted messages.
   final other = pgp.generateKey('other-recipient@example.org');
