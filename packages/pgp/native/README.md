@@ -1,15 +1,28 @@
-# `pgp-ffi`
-A crate to provide FFI bindings for OpenPGP and Sequoia.
+# pgp-ffi
 
-## Dependencies
-This crate uses `sequoia-openpgp` with the `crypto-rust` backend, so it does **not** require `nettle` / `nettle-dev` system packages to build.
+C FFI wrapper around `sequoia-openpgp` used by `package:pgp`.
 
-For the optional in-repo C smoke test (`test.c`), you'll need a C compiler (e.g., `gcc` or `clang`).
+## Crypto Backends
 
-## Development
-- Install `cbindgen`: `cargo install --force cbindgen`.
-- Regenerate `pgp-ffi.h`: `cargo build --features header`.
-- To run the C smoke test:
-  - `cargo build`
-  - `gcc test.c -I. -L./target/debug -lpgp_ffi -o test_runner`
-  - `LD_LIBRARY_PATH=./target/debug ./test_runner`
+- Default: `crypto-openssl-vendored`
+- Windows: `--no-default-features --features crypto-cng`
+- Alternative features: `crypto-nettle`, `crypto-rust`
+
+## Build and Test
+
+```bash
+cargo fmt --all --check
+cargo clippy --locked --lib --tests --examples -- -D warnings
+cargo test --locked --lib
+cargo test --locked --lib --no-default-features --features crypto-rust
+cargo deny --locked check advisories
+cargo deny --locked --config deny-windows-cng.toml check advisories
+```
+
+Regenerate `pgp-ffi.h` and verify the C harness:
+
+```bash
+cargo build --release --locked --features header
+gcc -Wall -Werror=implicit-function-declaration test.c -I. -L./target/release -lpgp_ffi -o test_runner
+LD_LIBRARY_PATH=./target/release ./test_runner
+```

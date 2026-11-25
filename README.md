@@ -1,80 +1,28 @@
-# `pgp`
-OpenPGP and Sequoia for Dart, backed by the `pgp-ffi` Rust crate.
+# pgp
 
-`package:pgp` is the Flutter-free, pure-Dart `dart:ffi` binding over a prebuilt
-native library (`libpgp_ffi.{so,dylib,dll}`). It does not ship or build the
-binary for you; build the crate first (see
-[Building the native library](#building-the-native-library)). A separate
-`pgp_flutter` package will build and bundle it via cargokit for Flutter apps.
+OpenPGP workspace for Dart backed by `sequoia-openpgp` over `dart:ffi`.
 
-## Getting started
-Add the package:
-```sh
-dart pub add pgp
-```
+## Packages
 
-Generate a certificate, share its public key, encrypt/decrypt, sign/verify, and
-export the secret key for storage:
-```dart
-import 'package:pgp/pgp.dart';
+- [`packages/pgp_dart`](packages/pgp_dart/README.md): Pure-Dart OpenPGP value types, algorithm enums, and `PgpException` with no native or Flutter dependencies.
+- [`packages/pgp`](packages/pgp/README.md): Pure-Dart FFI bindings re-exporting `pgp_dart`, plus the native `pgp-ffi` Rust crate under [`packages/pgp/native`](packages/pgp/native/README.md) bundled through `hook/build.dart`.
 
-void main() {
-  final pgp = PGP();
-  final cert = pgp.generateKey('someone@example.org');
-  final publicCert = pgp.certificateFromArmored(cert.exportPublicArmored());
+## Build Hook Resolution
 
-  final encrypted = publicCert.encrypt('hello');
-  print(cert.decrypt(encrypted));
+`packages/pgp/hook/build.dart` resolves `libpgp_ffi` in three tiers:
 
-  final signed = cert.sign('hello');
-  print(publicCert.verify(signed));
-
-  print(cert.exportSecretArmored());
-  publicCert.dispose();
-  cert.dispose();
-}
-```
-
-The package intentionally exposes common certificate and message workflows, not
-the full OpenPGP packet/keyserver surface:
-
-- generate certificates with encryption and signing subkeys, optionally with
-  an expiration or a passphrase-locked secret key
-- import and export ASCII-armored public and secret certificates
-- encrypt/decrypt and sign/verify ASCII-armored text messages, or raw bytes
-- multi-recipient and signed+encrypted messages
-- detached and cleartext signatures
-- symmetric (passphrase-only) encryption and decryption
-- add/revoke user IDs, add/revoke subkeys, and revoke certificates
-- inspect certificates: fingerprint, user IDs, and expiration
-
-See `example/pgp_example.dart` for the supported operations in one program.
-Build the native library first, then run it from the package root:
-```sh
-dart run example/pgp_example.dart
-```
-
-## Building the native library
-The package loads `libpgp_ffi` at runtime via `DynamicLibrary.open`. The crate
-lives in `pgp-ffi/`, vendored as a git subtree; build it with `cargo`:
-```sh
-cargo build --release --manifest-path pgp-ffi/Cargo.toml
-```
-The artifact lands in `pgp-ffi/target/release/`: `libpgp_ffi.so` (Linux),
-`libpgp_ffi.dylib` (macOS), or `pgp_ffi.dll` (Windows).
-
-The loader searches that directory relative to the current directory, so
-running from the package root works without copying anything. For a compiled
-executable, put the library on the dynamic library search path: next to the
-executable (or its `lib/`), in the working directory (or its `lib/`), or on
-`LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` / `PATH`. If loading fails, the package
-throws an `ArgumentError` listing every path it tried.
+1. `local_lib` user-define override pointing to a local shared library.
+2. Prebuilt `.tar.gz` release archive verified by SHA-256 (configured via pinned checksums or `prebuilt_base_url` / `prebuilt_sha256` user defines).
+3. Source build via `RustBuilder` (`native_toolchain_rust`), using `crypto-cng` on Windows and `crypto-openssl-vendored` on Unix/Android/iOS/macOS, with `--locked` builds, Android RELR opt-out and 16 KB ELF page alignment, and Apple deployment targets.
 
 ## Development
-- To generate the `lib/src/pgp-ffi_bindings_generated.dart` bindings for the
-  `pgp-ffi` C header:
-  ```
-  dart run ffigen --config ffigen.yaml
-  ```
-- New bindings expose opaque pointers and status codes.  Each native function
-  needs a hand-written wrapper in `lib/src/pgp_base.dart` (see `generateKey`).
+
+```bash
+dart pub get
+dart format --output none --set-exit-if-changed packages/pgp_dart packages/pgp
+dart analyze packages/pgp_dart packages/pgp
+(cd packages/pgp_dart && dart test)
+(cd packages/pgp && dart test)
+(cd packages/pgp/native && cargo test --locked --lib)
+./tool/consumer_build.sh
+```
